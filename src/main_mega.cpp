@@ -26,6 +26,7 @@ const char* MQTT_TOPIC = "goscoot/telemetry/bike001";
 
 // ----------------- Utilities -----------------
 GpsUtility gpsUtil(&Serial1, 9600);
+
 GsmUtility gsm(
     Serial2,
     APN, GPRS_USER, GPRS_PASS,
