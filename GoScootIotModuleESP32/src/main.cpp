@@ -1,19 +1,41 @@
 #include <Arduino.h>
 #include <Trip.h>
-
-// put function declarations here:
-int myFunction(int, int);
+#include <WiFi.h>
 
 void setup() {
-  // put your setup code here, to run once:
-  int result = myFunction(2, 3);
+  Serial.begin(115200); // to Arduino
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(); // no need to connect
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-}
+/*   if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
 
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
+    if (cmd == "SCAN") {
+      int n = WiFi.scanNetworks(false, true);
+      
+      Serial.printf("WIFI:%d\n", n);
+      for (int i = 0; i < n; i++) {
+        Serial.printf("%s,%d\n",
+          WiFi.BSSIDstr(i).c_str(),
+          WiFi.RSSI(i)
+        );
+      }
+      Serial.println("END");
+    }
+  } */
+
+  int n = WiFi.scanNetworks(false, true);
+      
+      Serial.printf("WIFI:%d\n", n);
+      for (int i = 0; i < n; i++) {
+        Serial.printf("%s,%d\n",
+          WiFi.BSSIDstr(i).c_str(),
+          WiFi.RSSI(i)
+        );
+      }
+      Serial.println("END");
+      delay(1000);
 }

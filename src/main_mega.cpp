@@ -15,7 +15,7 @@
 Bike currentBike;
 
 // ----------------- GSM / Network config -----------------
-const char APN[] = "your_apn_here"; // e.g. "v-internet"
+const char APN[] = "v-internet"; // e.g. "v-internet"
 const char GPRS_USER[] = "";
 const char GPRS_PASS[] = "";
 
@@ -134,6 +134,8 @@ void loop()
     else
     {
         Serial.println("Waiting for GPS fix...");
+        gsm.getCellTowerJSON();
+      
     }
 
     // ---- Battery ----
@@ -150,6 +152,23 @@ void loop()
     t.latitude = lat;
     t.battery = percent;
     t.time = gsm.getUnixTimestamp();
+
+    Serial.print("Telemetry => id=");
+    Serial.print(t.id);
+
+    Serial.print(" | bikeId=");
+    Serial.print(t.bikeId);
+
+    Serial.print(" | lon=");
+    Serial.print(t.longitude, 6); // 6 decimals
+
+    Serial.print(" | lat=");
+    Serial.print(t.latitude, 6);
+
+    Serial.print(" | battery=");
+    Serial.print(t.battery);
+
     gsm.publishTelemetry(t, MQTT_TOPIC);
+
     delay(1000);
 }

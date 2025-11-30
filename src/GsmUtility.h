@@ -57,6 +57,21 @@ struct GsmUtility
     {
     }
 
+    String readLineFromModem(uint32_t timeoutMs = 1000)
+    {
+        uint32_t start = millis();
+        while (millis() - start < timeoutMs)
+        {
+            if (modem.stream.available())
+            {
+                String line = modem.stream.readStringUntil('\n');
+                line.trim();
+                return line;
+            }
+        }
+        return "";
+    }
+
     // ---------------- Modem / network setup ----------------
     void setupModem()
     {
@@ -125,51 +140,78 @@ struct GsmUtility
     }
 
     // ---------------- Time from modem ----------------
- int64_t getUnixTimestamp()
-{
-    modem.sendAT("+CCLK?");
-
-    // 1) First line: echo "AT+CCLK?"
-    String line1 = modem.stream.readStringUntil('\n');
-    line1.trim();
-    // Optional debug:
-    // Serial.print("Line1: ");
-    // Serial.println(line1);
-
-    // 2) Second line: should be +CCLK: "24/11/28,07:35:44+08"
-    String res = modem.stream.readStringUntil('\n');
-    res.trim();
-    Serial.print("CCLK raw: ");
-    Serial.println(res);
-
-    if (!res.startsWith("+CCLK"))
+    int64_t getUnixTimestamp()
     {
-        Serial.println("CCLK not found");
-        return -1;
+        modem.sendAT("+CCLK?");
+
+        uint32_t start = millis();
+        String line;
+        String cclkLine;
+
+        Serial.println(F("---- Reading CCLK response ----"));
+
+        while (millis() - start < 2000)
+        {
+            if (modem.stream.available())
+            {
+                line = modem.stream.readStringUntil('\n');
+                line.trim();
+                if (line.length() == 0)
+                    continue;
+
+                Serial.print(F("LINE: "));
+                Serial.println(line);
+
+                if (line.startsWith("+CCLK"))
+                {
+                    cclkLine = line;
+                }
+                if (line == "OK")
+                    break;
+                if (line.indexOf("ERROR") >= 0)
+                {
+                    Serial.println(F("CCLK returned ERROR"));
+                    return -1;
+                }
+            }
+        }
+
+        if (cclkLine.length() == 0)
+        {
+            Serial.println(F("CCLK not found within timeout"));
+            return -1;
+        }
+
+        int quote1 = cclkLine.indexOf('"');
+        int quote2 = cclkLine.indexOf('"', quote1 + 1);
+        if (quote1 < 0 || quote2 < 0)
+        {
+            Serial.println(F("CCLK line format invalid"));
+            return -1;
+        }
+
+        String datetime = cclkLine.substring(quote1 + 1, quote2);
+        int y = datetime.substring(0, 2).toInt() + 2000;
+        int mo = datetime.substring(3, 5).toInt();
+        int d = datetime.substring(6, 8).toInt();
+        int h = datetime.substring(9, 11).toInt();
+        int mi = datetime.substring(12, 14).toInt();
+        int s = datetime.substring(15, 17).toInt();
+
+        tm timeinfo{};
+        timeinfo.tm_year = y - 1900;
+        timeinfo.tm_mon = mo - 1;
+        timeinfo.tm_mday = d;
+        timeinfo.tm_hour = h;
+        timeinfo.tm_min = mi;
+        timeinfo.tm_sec = s;
+
+        time_t t = mktime(&timeinfo);
+        Serial.print(F("Unix seconds: "));
+        Serial.println((long)t);
+
+        return (int64_t)t * 1000LL;
     }
-
-    // Example: +CCLK: "24/11/28,07:35:44+08"
-    int y  = res.substring(8, 10).toInt() + 2000;
-    int mo = res.substring(11, 13).toInt();
-    int d  = res.substring(14, 16).toInt();
-    int h  = res.substring(17, 19).toInt();
-    int mi = res.substring(20, 22).toInt();
-    int s  = res.substring(23, 25).toInt();
-
-    tm timeinfo{};
-    timeinfo.tm_year = y - 1900;
-    timeinfo.tm_mon  = mo - 1;
-    timeinfo.tm_mday = d;
-    timeinfo.tm_hour = h;
-    timeinfo.tm_min  = mi;
-    timeinfo.tm_sec  = s;
-
-    time_t t = mktime(&timeinfo); // seconds since 1970
-    Serial.print("Unix seconds: ");
-    Serial.println((long)t);
-
-    return (int64_t)t * 1000LL;   // ms
-}
 
     // ---------------- Publish Telemetry ----------------
     bool publishTelemetry(const Telemetry &t, const char *topic)
@@ -186,5 +228,94 @@ struct GsmUtility
             Serial.println(F("MQTT publish failed"));
         }
         return ok;
+    }
+
+    // ---------- small helper for parsing ints ----------
+    int safeInt(const String &s)
+    {
+        if (s.length() == 0)
+            return -1;
+        return s.toInt();
+    }
+
+    // ---------- read all pending data from modem for some time ----------
+    String readAllFromModem(uint16_t timeoutMs = 500)
+    {
+        String res;
+        unsigned long start = millis();
+        while (millis() - start < timeoutMs)
+        {
+            while (modem.stream.available())
+            {
+                char c = modem.stream.read();
+                res += c;
+            }
+        }
+        return res;
+    }
+
+    // ---------------- Cellular tower JSON (for indoor LBS) ----------------
+    //
+    // Returns JSON:
+    // {
+    //   "cellTowers":[
+    //     {
+    //       "cellId": 12345,
+    //       "locationAreaCode": 54321,
+    //       "mobileCountryCode": 452,
+    //       "mobileNetworkCode": 4,
+    //       "signalStrength": -85
+    //     }, ...
+    //   ]
+    // }
+    //
+    void getCellTowerJSON()
+    {
+        // Xoá mọi thứ còn tồn đọng
+        while (modem.stream.available())
+        {
+            modem.stream.read();
+        }
+
+        modem.sendAT("+CPSI?");
+
+        Serial.println(F("---- CPSI RESPONSE ----"));
+
+        String cpsiLine;
+        uint32_t start = millis();
+        while (millis() - start < 2000)
+        { // đọc tối đa 2 giây
+            String line = readLineFromModem(500);
+            if (line.length() == 0)
+                continue;
+
+            Serial.print(F("LINE: "));
+            Serial.println(line);
+
+            if (line.startsWith("+CPSI"))
+            {
+                cpsiLine = line;
+            }
+            if (line == "OK")
+            {
+                break; // đã hết response của lệnh này
+            }
+            if (line.indexOf("ERROR") >= 0)
+            {
+                Serial.println(F("CPSI returned ERROR"));
+                break;
+            }
+        }
+
+        if (cpsiLine.length() == 0)
+        {
+            Serial.println(F("No +CPSI line found"));
+            return;
+        }
+
+        Serial.print(F("Using CPSI line: "));
+        Serial.println(cpsiLine);
+
+        // TODO: sau này parse cpsiLine ra JSON
     }
 };
