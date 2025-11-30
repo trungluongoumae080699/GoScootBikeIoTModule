@@ -125,35 +125,51 @@ struct GsmUtility
     }
 
     // ---------------- Time from modem ----------------
-    int64_t getUnixTimestamp()
+ int64_t getUnixTimestamp()
+{
+    modem.sendAT("+CCLK?");
+
+    // 1) First line: echo "AT+CCLK?"
+    String line1 = modem.stream.readStringUntil('\n');
+    line1.trim();
+    // Optional debug:
+    // Serial.print("Line1: ");
+    // Serial.println(line1);
+
+    // 2) Second line: should be +CCLK: "24/11/28,07:35:44+08"
+    String res = modem.stream.readStringUntil('\n');
+    res.trim();
+    Serial.print("CCLK raw: ");
+    Serial.println(res);
+
+    if (!res.startsWith("+CCLK"))
     {
-        modem.sendAT("+CCLK?");
-        String res = modem.stream.readStringUntil('\n');
-
-        if (!res.startsWith("+CCLK"))
-        {
-            return -1;
-        }
-
-        // Example: +CCLK: "24/11/28,07:35:44+08"
-        int y = res.substring(8, 10).toInt() + 2000;
-        int mo = res.substring(11, 13).toInt();
-        int d = res.substring(14, 16).toInt();
-        int h = res.substring(17, 19).toInt();
-        int mi = res.substring(20, 22).toInt();
-        int s = res.substring(23, 25).toInt();
-
-        tm timeinfo{};
-        timeinfo.tm_year = y - 1900;
-        timeinfo.tm_mon = mo - 1;
-        timeinfo.tm_mday = d;
-        timeinfo.tm_hour = h;
-        timeinfo.tm_min = mi;
-        timeinfo.tm_sec = s;
-
-        time_t t = mktime(&timeinfo); // seconds since 1970
-        return (int64_t)t * 1000LL;   // ms
+        Serial.println("CCLK not found");
+        return -1;
     }
+
+    // Example: +CCLK: "24/11/28,07:35:44+08"
+    int y  = res.substring(8, 10).toInt() + 2000;
+    int mo = res.substring(11, 13).toInt();
+    int d  = res.substring(14, 16).toInt();
+    int h  = res.substring(17, 19).toInt();
+    int mi = res.substring(20, 22).toInt();
+    int s  = res.substring(23, 25).toInt();
+
+    tm timeinfo{};
+    timeinfo.tm_year = y - 1900;
+    timeinfo.tm_mon  = mo - 1;
+    timeinfo.tm_mday = d;
+    timeinfo.tm_hour = h;
+    timeinfo.tm_min  = mi;
+    timeinfo.tm_sec  = s;
+
+    time_t t = mktime(&timeinfo); // seconds since 1970
+    Serial.print("Unix seconds: ");
+    Serial.println((long)t);
+
+    return (int64_t)t * 1000LL;   // ms
+}
 
     // ---------------- Publish Telemetry ----------------
     bool publishTelemetry(const Telemetry &t, const char *topic)

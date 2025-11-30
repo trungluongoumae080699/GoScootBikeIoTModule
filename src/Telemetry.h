@@ -13,57 +13,66 @@ struct Telemetry {
   int64_t time;
 };
 
-void writeUint16BE(uint8_t *buf, uint16_t value, int &index) {
-  buf[index++] = (value >> 8) & 0xFF;
-  buf[index++] = (value) & 0xFF;
+// ---- helpers for little endian writes ----
+inline void writeInt32LE(uint8_t* buf, int32_t value, int& offset) {
+  uint32_t v = static_cast<uint32_t>(value);
+  buf[offset++] = (uint8_t)(v & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 8) & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 16) & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 24) & 0xFF);
 }
 
-void writeInt32BE(uint8_t *buf, int32_t value, int &index) {
-  buf[index++] = (value >> 24) & 0xFF;
-  buf[index++] = (value >> 16) & 0xFF;
-  buf[index++] = (value >> 8) & 0xFF;
-  buf[index++] = (value) & 0xFF;
+inline void writeInt64LE(uint8_t* buf, int64_t value, int& offset) {
+  uint64_t v = static_cast<uint64_t>(value);
+  buf[offset++] = (uint8_t)(v & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 8) & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 16) & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 24) & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 32) & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 40) & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 48) & 0xFF);
+  buf[offset++] = (uint8_t)((v >> 56) & 0xFF);
 }
 
-void writeInt64BE(uint8_t *buf, int64_t value, int &index) {
-  for (int i = 7; i >= 0; i--) {
-    buf[index++] = (value >> (8 * i)) & 0xFF;
-  }
+inline void writeFloat32LE(uint8_t* buf, float value, int& offset) {
+  // reinterpret float bits as uint32_t
+  uint32_t raw = 0;
+  memcpy(&raw, &value, sizeof(float));
+  buf[offset++] = (uint8_t)(raw & 0xFF);
+  buf[offset++] = (uint8_t)((raw >> 8) & 0xFF);
+  buf[offset++] = (uint8_t)((raw >> 16) & 0xFF);
+  buf[offset++] = (uint8_t)((raw >> 24) & 0xFF);
 }
 
-void writeFloatBE(uint8_t *buf, float value, int &index) {
-  uint32_t raw = *((uint32_t*)&value);  // reinterpret bits
-  writeInt32BE(buf, raw, index);
-}
+// ---- main encoder: matches your Go layout (except float size) ----
+inline int encodeTelemetry(const Telemetry& t, uint8_t* buffer) {
+  int offset = 0;
 
-int encodeTelemetry(const Telemetry &t, uint8_t *outBuf) {
-  int index = 0;
+  // 1) ID length (1 byte) + ID bytes
+  uint8_t idLen = (uint8_t)min((size_t)255, t.id.length());
+  buffer[offset++] = idLen;
+  memcpy(buffer + offset, t.id.c_str(), idLen);
+  offset += idLen;
 
-  // ----- Encode id -----
-  uint16_t idLen = t.id.length();
-  writeUint16BE(outBuf, idLen, index);
-  memcpy(outBuf + index, t.id.c_str(), idLen);
-  index += idLen;
+  // 2) BikeId length (1 byte) + BikeId bytes
+  uint8_t bikeLen = (uint8_t)min((size_t)255, t.bikeId.length());
+  buffer[offset++] = bikeLen;
+  memcpy(buffer + offset, t.bikeId.c_str(), bikeLen);
+  offset += bikeLen;
 
-  // ----- Encode bikeId -----
-  uint16_t bikeIdLen = t.bikeId.length();
-  writeUint16BE(outBuf, bikeIdLen, index);
-  memcpy(outBuf + index, t.bikeId.c_str(), bikeIdLen);
-  index += bikeIdLen;
+  // 3) BatteryStatus (int32, Little Endian)
+  writeInt32LE(buffer, t.battery, offset);
 
-  // ----- Encode float longitude -----
-  writeFloatBE(outBuf, t.longitude, index);
+  // 4) Longitude (float32, Little Endian)
+  writeFloat32LE(buffer, t.longitude, offset);
 
-  // ----- Encode float latitude -----
-  writeFloatBE(outBuf, t.latitude, index);
+  // 5) Latitude (float32, Little Endian)
+  writeFloat32LE(buffer, t.latitude, offset);
 
-  // ----- Encode int32 battery -----
-  writeInt32BE(outBuf, t.battery, index);
+  // 6) Time (int64, Little Endian)
+  writeInt64LE(buffer, t.time, offset);
 
-  // ----- Encode int64 time -----
-  writeInt64BE(outBuf, t.time, index);
-
-  return index; // number of bytes encoded
+  return offset;
 }
 
 
