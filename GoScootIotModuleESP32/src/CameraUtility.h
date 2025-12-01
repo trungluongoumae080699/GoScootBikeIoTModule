@@ -24,8 +24,12 @@ static camera_config_t camera_config = {
   .xclk_freq_hz = 20000000,
   .ledc_timer = LEDC_TIMER_0,
   .ledc_channel = LEDC_CHANNEL_0,
-  .pixel_format = PIXFORMAT_JPEG,
-  .frame_size = FRAMESIZE_QVGA,   // best for QR
+
+  // 🔴 ĐỔI DÒNG NÀY:
+  // .pixel_format = PIXFORMAT_JPEG,
+  .pixel_format = PIXFORMAT_GRAYSCALE,   // <-- tốt cho QR
+
+  .frame_size = FRAMESIZE_QVGA,          // 320x240 là đủ cho QR gần
   .jpeg_quality = 12,
   .fb_count = 1
 };

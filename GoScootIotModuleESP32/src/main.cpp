@@ -2,40 +2,51 @@
 #include <Trip.h>
 #include <WiFi.h>
 
+#include <Arduino.h>
+#include "CameraUtility.h"
+#include <ESP32QRCodeReader.h>
+
+// dùng AI Thinker pin map – trùng với camera_config bạn đang dùng
+ESP32QRCodeReader qr(CAMERA_MODEL_AI_THINKER);
+
+// struct chứa dữ liệu QR do lib cung cấp
+QRCodeData qrCodeData;
+
 void setup() {
-  Serial.begin(115200); // to Arduino
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(); // no need to connect
+    Serial.begin(115200);
+    delay(1000);
+    Serial.println();
+    Serial.println("=== ESP32-CAM QR Scanner (ESP32QRCodeReader) ===");
+
+    // KHÔNG gọi initCamera() nữa – thư viện tự init camera bên trong
+    qr.setup();
+    Serial.println("Setup QRCode Reader");
+
+    // chạy xử lý camera trên core 1 cho mượt hơn
+    qr.beginOnCore(1);
+    Serial.println("Begin QR task on core 1");
 }
 
+
 void loop() {
-/*   if (Serial.available()) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
+    // receiveQrCode(&qrCodeData, timeout_ms)
+    if (qr.receiveQrCode(&qrCodeData, 100)) {
+        Serial.println("Scanned new QRCode");
 
-    if (cmd == "SCAN") {
-      int n = WiFi.scanNetworks(false, true);
-      
-      Serial.printf("WIFI:%d\n", n);
-      for (int i = 0; i < n; i++) {
-        Serial.printf("%s,%d\n",
-          WiFi.BSSIDstr(i).c_str(),
-          WiFi.RSSI(i)
-        );
-      }
-      Serial.println("END");
+        if (qrCodeData.valid) {
+            Serial.print("Valid payload: ");
+            Serial.println((const char *)qrCodeData.payload);
+        } else {
+            Serial.print("Invalid payload: ");
+            Serial.println((const char *)qrCodeData.payload);
+        }
+
+        // TODO: chỗ này bạn xử lý QR:
+        //  - parse trip/session/bike id
+        //  - gửi HTTP request
+        //  - đổi state UI, bật relay, v.v.
+        delay(1500);  // tránh spam nếu giữ QR trước camera
     }
-  } */
 
-  int n = WiFi.scanNetworks(false, true);
-      
-      Serial.printf("WIFI:%d\n", n);
-      for (int i = 0; i < n; i++) {
-        Serial.printf("%s,%d\n",
-          WiFi.BSSIDstr(i).c_str(),
-          WiFi.RSSI(i)
-        );
-      }
-      Serial.println("END");
-      delay(1000);
+    delay(50);
 }
