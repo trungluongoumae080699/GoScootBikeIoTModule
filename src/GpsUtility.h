@@ -31,6 +31,37 @@ struct GpsUtility
     }
 
     bool hasFix() {
-        return gps.satellites.value() >= 4;
+        return gps.satellites.isValid() && gps.satellites.value() >= 4;
+    }
+
+    // -----------------------------
+    // 🔥 NEW: Debug printer function
+    // -----------------------------
+    void printDebug() {
+        Serial.print("Satellites: ");
+        if (gps.satellites.isValid())
+            Serial.print(gps.satellites.value());
+        else
+            Serial.print("invalid");
+
+        Serial.print(" | Location: ");
+        if (gps.location.isValid()) {
+            Serial.print(gps.location.lat(), 6);
+            Serial.print(", ");
+            Serial.print(gps.location.lng(), 6);
+        } else {
+            Serial.print("NO FIX");
+        }
+
+        Serial.print(" | Chars: ");
+        Serial.print(gps.charsProcessed());
+
+        Serial.print(" | Fix sentences: ");
+        Serial.print(gps.sentencesWithFix());
+
+        Serial.print(" | Age: ");
+        Serial.print(gps.location.age());
+
+        Serial.println();
     }
 };

@@ -6,10 +6,7 @@
 #include <PubSubClient.h>
 #include <time.h>
 #include "Telemetry.h"
-
-// IMPORTANT: In main.cpp you must:
-// #define TINY_GSM_MODEM_SIM7600
-// BEFORE including TinyGsmClient.h / this header.
+#include <CellInfo.h>
 
 struct GsmUtility
 {
@@ -26,7 +23,8 @@ struct GsmUtility
 
     // --- GSM + MQTT objects ---
     TinyGsm modem;
-    TinyGsmClient netClient;
+    TinyGsmClient netClient; // for MQTT
+    // TinyGsmClient httpClient;  // for HTTP
     PubSubClient mqtt;
 
     // Optional publish interval tracking
@@ -53,6 +51,7 @@ struct GsmUtility
           mqttPass(mqttPass),
           modem(serial),
           netClient(modem),
+          // httpClient(modem),
           mqtt(netClient)
     {
     }
@@ -255,23 +254,9 @@ struct GsmUtility
     }
 
     // ---------------- Cellular tower JSON (for indoor LBS) ----------------
-    //
-    // Returns JSON:
-    // {
-    //   "cellTowers":[
-    //     {
-    //       "cellId": 12345,
-    //       "locationAreaCode": 54321,
-    //       "mobileCountryCode": 452,
-    //       "mobileNetworkCode": 4,
-    //       "signalStrength": -85
-    //     }, ...
-    //   ]
-    // }
-    //
-    void getCellTowerJSON()
+    String getCellTowerJSON()
     {
-        // Xoá mọi thứ còn tồn đọng
+        // Clear any leftover bytes
         while (modem.stream.available())
         {
             modem.stream.read();
@@ -284,7 +269,7 @@ struct GsmUtility
         String cpsiLine;
         uint32_t start = millis();
         while (millis() - start < 2000)
-        { // đọc tối đa 2 giây
+        { // read for up to 2 seconds
             String line = readLineFromModem(500);
             if (line.length() == 0)
                 continue;
@@ -298,7 +283,7 @@ struct GsmUtility
             }
             if (line == "OK")
             {
-                break; // đã hết response của lệnh này
+                break; // end of response
             }
             if (line.indexOf("ERROR") >= 0)
             {
@@ -310,12 +295,153 @@ struct GsmUtility
         if (cpsiLine.length() == 0)
         {
             Serial.println(F("No +CPSI line found"));
-            return;
+            return String(); // empty = failure
         }
 
         Serial.print(F("Using CPSI line: "));
         Serial.println(cpsiLine);
 
-        // TODO: sau này parse cpsiLine ra JSON
+        CellInfo cell;
+        if (!cell.parseCpsiLine(cpsiLine))
+        {
+            Serial.println(F("Failed to parse CPSI line"));
+            return String();
+        }
+
+        String json = cell.buildLocationApiJson();
+        Serial.println(F("LocationAPI JSON:"));
+        Serial.println(json);
+
+        return json;
+    }
+
+    // --------------------------------------------------
+    //            HTTP HELPERS (part of GsmUtility)
+    // --------------------------------------------------
+
+    // full-url style: "http://example.com:8080/path"
+    String httpGet(const char *url)
+    {
+        const char *host = urlHost(url);
+        int port = urlPort(url);
+        const char *path = urlPath(url);
+
+        Serial.print(F("[HTTP] GET "));
+        Serial.print(host);
+        Serial.print(":");
+        Serial.print(port);
+        Serial.println(path);
+
+        // IMPORTANT: don't keep MQTT using netClient at the same time
+        mqtt.disconnect(); // optional but safer
+
+        if (!netClient.connect(host, port))
+        {
+            Serial.println(F("[HTTP] GET connect failed"));
+            return "";
+        }
+
+        netClient.print(String("GET ") + path + " HTTP/1.1\r\n");
+        netClient.print(String("Host: ") + host + "\r\n");
+        netClient.print("Connection: close\r\n");
+        netClient.print("\r\n");
+
+        String resp = readHttpResponse();
+        return resp;
+    }
+
+    String httpPostJson(const char *url, const String &jsonBody)
+    {
+        const char *host = urlHost(url);
+        int port = urlPort(url);
+        const char *path = urlPath(url);
+
+        Serial.print(F("[HTTP] POST "));
+        Serial.print(host);
+        Serial.print(":");
+        Serial.print(port);
+        Serial.println(path);
+
+        mqtt.disconnect(); // optional but safer
+
+        if (!netClient.connect(host, port))
+        {
+            Serial.println(F("[HTTP] POST connect failed"));
+            return "";
+        }
+
+        netClient.print(String("POST ") + path + " HTTP/1.1\r\n");
+        netClient.print(String("Host: ") + host + "\r\n");
+        netClient.print("Content-Type: application/json\r\n");
+        netClient.print(String("Content-Length: ") + jsonBody.length() + "\r\n");
+        netClient.print("Connection: close\r\n\r\n");
+        netClient.print(jsonBody);
+
+        String resp = readHttpResponse();
+        return resp;
+    }
+
+    // Use netClient here too
+    String readHttpResponse()
+    {
+        String resp;
+        uint32_t start = millis();
+
+        while (millis() - start < 10000)
+        {
+            while (netClient.available())
+            {
+                char c = netClient.read();
+                resp += c;
+            }
+            if (!netClient.connected())
+                break;
+        }
+
+        netClient.stop();
+        return resp;
+    }
+
+    // ---- URL parsing helpers ----
+    const char *urlHost(const char *url)
+    {
+        const char *p = strstr(url, "://");
+        if (p)
+            url = p + 3;
+
+        static char host[100];
+        int i = 0;
+        while (*url && *url != '/' && *url != ':' && i < 99)
+        {
+            host[i++] = *url++;
+        }
+        host[i] = 0;
+        return host;
+    }
+
+    int urlPort(const char *url)
+    {
+        const char *p = strstr(url, "://");
+        if (p)
+            url = p + 3;
+
+        while (*url && *url != '/' && *url != ':')
+            url++;
+
+        if (*url == ':')
+            return atoi(url + 1);
+        return 80;
+    }
+
+    const char *urlPath(const char *url)
+    {
+        const char *p = strstr(url, "://");
+        if (p)
+            url = p + 3;
+
+        while (*url && *url != '/')
+            url++;
+
+        return (*url ? url : "/");
     }
 };

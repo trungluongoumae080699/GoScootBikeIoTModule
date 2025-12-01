@@ -21,13 +21,14 @@ const char GPRS_PASS[] = "";
 
 // ----------------- MQTT config -----------------
 const char *MQTT_HOST = "0.tcp.ap.ngrok.io";
-const uint16_t MQTT_PORT = 11539;
+const uint16_t MQTT_PORT = 12123;
 const char *MQTT_USER = "BIK_298A1J35";
 const char *MQTT_PASS = "TrungLuong080699!!!";
 const char *MQTT_TOPIC = "/telemetry/BIK_298A1J35";
 
 // ----------------- Utilities -----------------
 GpsUtility gpsUtil(&Serial1, 9600);
+TinyGPSPlus gps;
 
 GsmUtility gsm(
     Serial2,
@@ -38,6 +39,10 @@ GsmUtility gsm(
 // Battery sensor
 int sensorPin = A0; // OUT from voltage sensor
 float RATIO = 5.0;  // divider ratio
+boolean isInside = false;
+float last_gps_long = 0;
+float last_gps_lat = 0;
+int64_t last_gps_contact_time = 0;
 
 // ----------------- Helpers -----------------
 float readBatteryVoltage()
@@ -112,6 +117,7 @@ void setup()
 
 void loop()
 {
+
     // Keep MQTT alive
     if (!gsm.ensureMqttConnected("goscoot-bike-", "goscoot/control/bike001"))
     {
@@ -126,16 +132,22 @@ void loop()
 
     if (gpsUtil.getLocation(lat, lng))
     {
-        Serial.print("LAT = ");
-        Serial.println(lat, 6);
-        Serial.print("LNG = ");
-        Serial.println(lng, 6);
+        isInside = true;
+        last_gps_contact_time = gsm.getUnixTimestamp();
+        last_gps_lat = lat;
+        last_gps_long = lng;
     }
     else
     {
         Serial.println("Waiting for GPS fix...");
-        gsm.getCellTowerJSON();
-      
+        isInside = false;
+        String cellJson = gsm.getCellTowerJSON();
+        if (cellJson.length() > 0)
+        {
+            String resp = gsm.httpPostJson("http://eu1.unwiredlabs.com/v2/process.php", cellJson);
+            Serial.println("Location API response:");
+            Serial.println(resp);
+        }
     }
 
     // ---- Battery ----
@@ -152,23 +164,11 @@ void loop()
     t.latitude = lat;
     t.battery = percent;
     t.time = gsm.getUnixTimestamp();
-
-    Serial.print("Telemetry => id=");
-    Serial.print(t.id);
-
-    Serial.print(" | bikeId=");
-    Serial.print(t.bikeId);
-
-    Serial.print(" | lon=");
-    Serial.print(t.longitude, 6); // 6 decimals
-
-    Serial.print(" | lat=");
-    Serial.print(t.latitude, 6);
-
-    Serial.print(" | battery=");
-    Serial.print(t.battery);
+    t.last_gps_contact_time = last_gps_contact_time;
+    t.last_gps_lat = last_gps_lat;
+    t.last_gps_long = last_gps_long;
 
     gsm.publishTelemetry(t, MQTT_TOPIC);
 
-    delay(1000);
+    delay(5000);
 }
