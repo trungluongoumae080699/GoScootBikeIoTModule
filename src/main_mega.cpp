@@ -27,8 +27,7 @@ const char *MQTT_PASS = "TrungLuong080699!!!";
 const char *MQTT_TOPIC = "/telemetry/BIK_298A1J35";
 
 // ----------------- Utilities -----------------
-GpsUtility gpsUtil(&Serial1, 9600);
-TinyGPSPlus gps;
+GpsUtility gpsUtil(&Serial1);
 
 GsmUtility gsm(
     Serial2,
@@ -112,11 +111,72 @@ void setup()
     // GPS
     gpsUtil.begin();
     // GSM / MQTT
-    gsm.setupModem();
+    // gsm.setupModem();
 }
 
 void loop()
 {
+    gpsUtil.update(); // luôn đọc GPS trước
+    static unsigned long last = 0;
+    if (millis() - last > 1000)
+    {
+        last = millis();
+
+        gpsUtil.printDebug();
+
+        float lat, lng;
+        if (gpsUtil.getLocation(lat, lng))
+        {
+            isInside = false;
+            last_gps_contact_time = gsm.getUnixTimestamp();
+            last_gps_lat = lat;
+            last_gps_long = lng;
+        }
+        else
+        {
+            isInside = true;
+        }
+        if (isInside)
+        {
+            String cellJson = gsm.getCellTowerJSON();
+            if (cellJson.length() > 0)
+            {
+                String resp = gsm.httpPostJson("http://eu1.unwiredlabs.com/v2/process.php", cellJson);
+                Serial.println("Location API response:");
+                Serial.println(resp);
+            }
+        }
+        if (!gsm.ensureMqttConnected("goscoot-bike-", "goscoot/control/bike001"))
+        {
+            delay(2000);
+            return;
+        }
+        gsm.loop();
+
+        // ---- Battery ----
+        int percent = 100;
+        currentBike.longitude = lat;
+        currentBike.latitude = lng;
+        currentBike.battery = percent;
+        Telemetry t;
+        t.id = generateUUID();
+        t.bikeId = currentBike.userName;
+        t.longitude = lng;
+        t.latitude = lat;
+        t.battery = percent;
+        t.time = gsm.getUnixTimestamp();
+        t.last_gps_contact_time = last_gps_contact_time;
+        t.last_gps_lat = last_gps_lat;
+        t.last_gps_long = last_gps_long;
+        gsm.publishTelemetry(t, MQTT_TOPIC);
+        delay(1000);
+    }
+}
+
+/*
+void loop()
+{
+
 
     // Keep MQTT alive
     if (!gsm.ensureMqttConnected("goscoot-bike-", "goscoot/control/bike001"))
@@ -128,21 +188,22 @@ void loop()
 
     // ---- GPS ----
     gpsUtil.update();
+    gpsUtil.printDebug();
     float lat = 0, lng = 0;
 
     if (gpsUtil.getLocation(lat, lng))
     {
         isInside = true;
-        last_gps_contact_time = gsm.getUnixTimestamp();
+        //last_gps_contact_time = gsm.getUnixTimestamp();
         last_gps_lat = lat;
         last_gps_long = lng;
     }
     else
     {
         Serial.println("Waiting for GPS fix...");
-        isInside = false;
+       isInside = false;
         String cellJson = gsm.getCellTowerJSON();
-        if (cellJson.length() > 0)
+       if (cellJson.length() > 0)
         {
             String resp = gsm.httpPostJson("http://eu1.unwiredlabs.com/v2/process.php", cellJson);
             Serial.println("Location API response:");
@@ -157,7 +218,7 @@ void loop()
     currentBike.latitude = lng;
     currentBike.battery = percent;
 
-    Telemetry t;
+   Telemetry t;
     t.id = generateUUID();
     t.bikeId = currentBike.userName;
     t.longitude = lng;
@@ -170,5 +231,75 @@ void loop()
 
     gsm.publishTelemetry(t, MQTT_TOPIC);
 
-    delay(5000);
+    delay(1000);
+
 }
+    */
+
+/*
+// Ví dụ với Arduino Mega: GPS nối vào Serial1 (RX1=19, TX1=18)
+#define GPS_SERIAL Serial1
+
+void setup() {
+  Serial.begin(115200);
+  GPS_SERIAL.begin(38400);
+}
+
+void loop() {
+  while (GPS_SERIAL.available()) {
+    char c = GPS_SERIAL.read();
+    Serial.write(c);   // in nguyên dữ liệu từ GPS ra monitor
+  }
+}
+  */
+
+/*
+TinyGPSPlus gps;
+HardwareSerial &gpsPort = Serial1; // NEO-M10 TX -> RX1 (pin 19), RX -> TX1 (pin 18)
+
+void setup()
+{
+    Serial.begin(115200);
+    gpsPort.begin(38400); // đúng cái baud mà em đã test thấy NMEA đọc được
+}
+
+void loop()
+{
+    while (gpsPort.available() > 0)
+    {
+        char c = gpsPort.read();
+
+        // echo raw NMEA để chắc chắn data vào đúng
+        Serial.write(c);
+
+        // cho TinyGPS++ ăn từng ký tự
+        gps.encode(c);
+    }
+
+    static unsigned long last = 0;
+    if (millis() - last > 1000)
+    {
+        last = millis();
+
+        Serial.println();
+        Serial.print("Chars: ");
+        Serial.print(gps.charsProcessed());
+        Serial.print(" | Sentences with fix: ");
+        Serial.print(gps.sentencesWithFix());
+        Serial.print(" | Age: ");
+        Serial.println(gps.location.age());
+
+        if (gps.location.isValid())
+        {
+            Serial.print("FIX: ");
+            Serial.print(gps.location.lat(), 6);
+            Serial.print(", ");
+            Serial.println(gps.location.lng(), 6);
+        }
+        else
+        {
+            Serial.println("No valid GPS location yet.");
+        }
+    }
+}
+    */

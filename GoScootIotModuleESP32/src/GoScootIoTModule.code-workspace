@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "../../../../../Arduino/GoScootIoTModule"
+		},
+		{
+			"name": "GoScootIotModule",
+			"path": "../.."
+		},
+		{
+			"name": "GoScootIotModuleESP32",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

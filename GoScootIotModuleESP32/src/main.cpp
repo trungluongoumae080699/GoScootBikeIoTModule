@@ -1,16 +1,36 @@
 #include <Arduino.h>
-#include <Trip.h>
-#include <WiFi.h>
-
-#include <Arduino.h>
-#include "CameraUtility.h"
 #include <ESP32QRCodeReader.h>
 
-// dùng AI Thinker pin map – trùng với camera_config bạn đang dùng
-ESP32QRCodeReader qr(CAMERA_MODEL_AI_THINKER);
+// ESP32-CAM AI-Thinker pin map
+ESP32QRCodeReader reader(CAMERA_MODEL_AI_THINKER);
 
-// struct chứa dữ liệu QR do lib cung cấp
-QRCodeData qrCodeData;
+// FreeRTOS task that will read QR codes
+void onQrCodeTask(void *pvParameters) {
+    QRCodeData qrCodeData;
+
+    Serial.print("onQrCodeTask running on core ");
+    Serial.println(xPortGetCoreID());
+
+    while (true) {
+        // Try to get a QR code within 100 ms
+        if (reader.receiveQrCode(&qrCodeData, 100)) {
+            Serial.println("🔔 Found QRCode");
+
+            if (qrCodeData.valid) {
+                Serial.print("✅ Payload: ");
+                Serial.println((const char *)qrCodeData.payload);
+            } else {
+                Serial.print("❌ Invalid: ");
+                Serial.println((const char *)qrCodeData.payload);
+            }
+
+            // tránh spam nếu giữ QR trước camera
+            vTaskDelay(1500 / portTICK_PERIOD_MS);
+        }
+
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+}
 
 void setup() {
     Serial.begin(115200);
@@ -18,35 +38,33 @@ void setup() {
     Serial.println();
     Serial.println("=== ESP32-CAM QR Scanner (ESP32QRCodeReader) ===");
 
-    // KHÔNG gọi initCamera() nữa – thư viện tự init camera bên trong
-    qr.setup();
-    Serial.println("Setup QRCode Reader");
-
-    // chạy xử lý camera trên core 1 cho mượt hơn
-    qr.beginOnCore(1);
-    Serial.println("Begin QR task on core 1");
-}
-
-
-void loop() {
-    // receiveQrCode(&qrCodeData, timeout_ms)
-    if (qr.receiveQrCode(&qrCodeData, 100)) {
-        Serial.println("Scanned new QRCode");
-
-        if (qrCodeData.valid) {
-            Serial.print("Valid payload: ");
-            Serial.println((const char *)qrCodeData.payload);
-        } else {
-            Serial.print("Invalid payload: ");
-            Serial.println((const char *)qrCodeData.payload);
-        }
-
-        // TODO: chỗ này bạn xử lý QR:
-        //  - parse trip/session/bike id
-        //  - gửi HTTP request
-        //  - đổi state UI, bật relay, v.v.
-        delay(1500);  // tránh spam nếu giữ QR trước camera
+    // Optional: check PSRAM – this lib needs it
+    if (psramFound()) {
+        Serial.println("✅ PSRAM detected");
+    } else {
+        Serial.println("⚠️ PSRAM NOT FOUND – this lib may not work on this board");
     }
 
-    delay(50);
+    Serial.println("Calling reader.setup()...");
+    reader.setup();                        // init camera + QR engine
+    Serial.println("reader.setup() done");
+
+    Serial.println("Starting internal QR task on core 1...");
+    reader.beginOnCore(1);                 // start camera/decoder task
+    Serial.println("reader.beginOnCore(1) done");
+
+    // Start our QR consumer task
+    xTaskCreate(
+        onQrCodeTask,                      // task function
+        "onQrCode",                        // name
+        4 * 1024,                          // stack
+        NULL,                              // params
+        4,                                 // priority
+        NULL                               // handle
+    );
+}
+
+void loop() {
+    // nothing here, everything runs in FreeRTOS tasks
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
