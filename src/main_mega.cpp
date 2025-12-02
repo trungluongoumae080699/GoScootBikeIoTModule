@@ -111,9 +111,104 @@ void setup()
     // GPS
     gpsUtil.begin();
     // GSM / MQTT
-    // gsm.setupModem();
+    gsm.setupModem();
 }
 
+void loop()
+{
+    // 1) Luôn luôn đọc GPS + cho modem chạy
+    gpsUtil.update();
+    gsm.loop();
+
+    unsigned long now = millis();
+
+    // 2) Mỗi 1000 ms in debug + lấy tọa độ
+    static unsigned long lastGpsPrint = 0;
+    static float lastLat = 0, lastLng = 0;
+
+    if (now - lastGpsPrint >= 1000)
+    {
+        lastGpsPrint = now;
+
+        gpsUtil.printDebug();
+
+        float lat, lng;
+        if (gpsUtil.getLocation(lat, lng))
+        {
+            isInside = false;
+            last_gps_contact_time = gsm.getUnixTimestamp();
+            last_gps_lat = lat;
+            last_gps_long = lng;
+            lastLat = lat;
+            lastLng = lng;
+        }
+        else
+        {
+            // Không có fix GPS -> đánh dấu "inside"
+            isInside = true;
+            
+        }
+    }
+
+    // 3) Chỉ gọi cell-tower API 30s/lần khi không có GPS fix
+    static unsigned long lastCellReq = 0;
+    if (isInside && (now - lastCellReq >= 30000)) // 30 giây
+    {
+        lastCellReq = now;
+
+        String cellJson = gsm.getCellTowerJSON();
+        Serial.println("LocationAPI JSON:");
+        Serial.println(cellJson);
+
+        if (cellJson.length() > 0)
+        {
+            String resp = gsm.httpPostJson("http://eu1.unwiredlabs.com/v2/process.php", cellJson);
+            Serial.println("Location API response:");
+            Serial.println(resp);
+        }
+    }
+
+    // 4) Đảm bảo MQTT (có thể 10s check 1 lần)
+    static unsigned long lastMqttCheck = 0;
+    if (now - lastMqttCheck >= 10000) // 10 giây
+    {
+        lastMqttCheck = now;
+        if (!gsm.ensureMqttConnected("goscoot-bike-", "goscoot/control/bike001"))
+        {
+            // nếu fail thì thôi, lần sau check lại, KHÔNG delay lâu
+            Serial.println("MQTT not connected, will retry...");
+        }
+    }
+
+    // 5) Publish telemetry mỗi 5 giây
+    static unsigned long lastTelemetry = 0;
+    if (now - lastTelemetry >= 5000)
+    {
+        lastTelemetry = now;
+
+        int percent = 100;
+        currentBike.longitude = lastLat;
+        currentBike.latitude = lastLng;
+        currentBike.battery = percent;
+
+        Telemetry t;
+        t.id = generateUUID();
+        t.bikeId = currentBike.userName;
+        t.longitude = lastLng;
+        t.latitude = lastLat;
+        t.battery = percent;
+        t.time = gsm.getUnixTimestamp();
+        t.last_gps_contact_time = last_gps_contact_time;
+        t.last_gps_lat = last_gps_lat;
+        t.last_gps_long = last_gps_long;
+
+        gsm.publishTelemetry(t, MQTT_TOPIC);
+        Serial.println("Telemetry published.");
+    }
+
+    // Không dùng delay() nữa
+}
+/*
 void loop()
 {
     gpsUtil.update(); // luôn đọc GPS trước
@@ -134,11 +229,16 @@ void loop()
         }
         else
         {
+            lat = 0;
+            lng = 0;
+            last_gps_lat = lat;
+            last_gps_long = lng;
             isInside = true;
         }
         if (isInside)
         {
             String cellJson = gsm.getCellTowerJSON();
+            Serial.println(cellJson);
             if (cellJson.length() > 0)
             {
                 String resp = gsm.httpPostJson("http://eu1.unwiredlabs.com/v2/process.php", cellJson);
@@ -171,7 +271,7 @@ void loop()
         gsm.publishTelemetry(t, MQTT_TOPIC);
         delay(1000);
     }
-}
+} */
 
 /*
 void loop()
