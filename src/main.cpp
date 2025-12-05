@@ -7,6 +7,7 @@
 #include <HardwareSerial.h>
 #include <time.h>
 #include <LiquidCrystal_I2C.h>
+#include <SoftwareSerial.h>
 
 #include "Domains/Bike.h"
 #include "Domains/Telemetry.h"
@@ -72,6 +73,10 @@ QrScannerUtilityNonBlocking qrScanner(Serial3);
 
 // Network scheduler
 NetworkInterfaceScheduler netScheduler;
+
+SoftwareSerial BT(10, 11); // RX = 10, TX = 11
+const int IN1 = 8;
+const int IN2 = 9;
 
 // Battery sensor (nếu cần sau này)
 int sensorPin = A0; // OUT từ module đo áp
@@ -167,6 +172,12 @@ bool isOutsideAllowedArea(float lat, float lng)
 
 void setup()
 {
+    BT.begin(9600); // HC-06 default baud rate
+    pinMode(IN1, OUTPUT);
+    pinMode(IN2, OUTPUT);
+    // stop motors at start
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
     Serial.begin(115200);
     delay(200);
 
@@ -210,6 +221,33 @@ void loop()
     currentUnixTime = time.nowUnixMs();
     unsigned long now = millis();
 
+    if (BT.available())
+    {
+        char cmd = BT.read();
+        if (cmd == '1' && bikeState == INUSED)
+        {
+
+            // Forward
+            digitalWrite(IN1, HIGH);
+            digitalWrite(IN2, LOW);
+        }
+        else if (cmd == '2' && bikeState == INUSED)
+        {
+            // Backward
+            digitalWrite(IN1, LOW);
+            digitalWrite(IN2, HIGH);
+        }
+        else 
+        {
+            // Stop
+            digitalWrite(IN1, LOW);
+            digitalWrite(IN2, LOW);
+        }
+    } else {
+        digitalWrite(IN1, LOW);
+        digitalWrite(IN2, LOW);
+    }
+
     // -------------------------------------------------
     // 1) QR SCANNER – ONLY when bike is IDLE
     // -------------------------------------------------
@@ -249,8 +287,7 @@ void loop()
                     http,
                     "http://your-backend/trip/validate",
                     qrCode,
-                    &currentTripId
-                    , &bikeState);
+                    &currentTripId, &bikeState);
                 netScheduler.enqueue(task, TASK_PRIORITY_CRITICAL);
             }
             else
