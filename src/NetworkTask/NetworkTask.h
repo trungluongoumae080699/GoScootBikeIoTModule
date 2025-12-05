@@ -15,30 +15,33 @@ struct NetworkTask
     // ---------------------------------------------------------
     virtual bool isMandatory() const { return false; }
 
-    // ---------------------------------------------------------
-    // State control for non-blocking tasks
-    // ---------------------------------------------------------
 protected:
-    bool started   = false;
-    bool completed = false;
-    uint32_t startMs = 0;   // used for timeout inside execute()
+    // ---------------------------------------------------------
+    // State for non-blocking tasks
+    // ---------------------------------------------------------
+    bool     started   = false;
+    bool     completed = false;
+    uint32_t startMs   = 0;   // used for timeout inside execute()
 
 public:
-    // Called by task internally the first time it runs
-    void markStarted()
+    // ---------------------------------------------------------
+    // Lifecycle helpers (now virtual so children can override)
+    // ---------------------------------------------------------
+    virtual void markStarted()
     {
-        started = true;
-        startMs = millis();
+        if (!started)
+        {
+            started = true;
+            startMs = millis();
+        }
     }
 
-    // Called by task internally when done
-    void markCompleted()
+    virtual void markCompleted()
     {
         completed = true;
     }
 
-    bool isStarted() const { return started; }
-    bool isCompleted() const { return completed; }
-
+    bool isStarted() const    { return started; }
+    bool isCompleted() const  { return completed; }
     uint32_t getStartMs() const { return startMs; }
 };

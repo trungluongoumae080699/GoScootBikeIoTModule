@@ -3,10 +3,11 @@
 #include <stdint.h>
 
 struct CellInfo {
-    int   mcc  = 0;
-    int   mnc  = 0;
-    long  lac  = 0;   // TAC/LAC
-    long  cid  = 0;   // Cell ID
+    int   mcc = 0;
+    int   mnc = 0;
+    long  lac = 0;   // TAC/LAC
+    long  cid = 0;   // Cell ID
+    bool isOutdated = false;
 
     // ----------------------------------------------------------
     // Parse CPSI line → Fill fields (mcc, mnc, lac, cid)
@@ -55,6 +56,7 @@ struct CellInfo {
                 cid = token.toInt();
                 break; // done
             }
+            isOutdated = false;
 
             if (comma < 0) break;
             start = comma + 1;

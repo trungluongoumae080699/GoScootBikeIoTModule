@@ -26,6 +26,8 @@
 #include "NetworkTask/CellTowerQueryTask.h"
 #include "NetworkTask/FetchGeolocationApiTask.h"
 #include "NetworkTask/ValidateReservationWithServer.h"
+#include "NetworkTask/HttpMaintenanceTask.h"
+#include "NetworkTask/MqttMaintenanceTask.h"
 
 // =====================================================
 //  GLOBAL CONFIG
@@ -47,7 +49,7 @@ const char *ALERT_TOPIC = "/alerts/BIK_298A1J35"; // alerts topic
 // ----------------- Objects / utilities -----------------
 
 Bike currentBike;
-CellInfo *cellInfo = nullptr; // will be allocated on demand
+CellInfo cellInfo; 
 
 // I2C LCD 16x2 @ 0x27
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -66,7 +68,7 @@ GsmConfiguration gsm(
 HttpConfiguration http(gsm.netClient, &gsm.mqtt);
 
 // Time from modem
-TimeConfiguration time(gsm.modem);
+TimeConfiguration timeConfig(gsm.modem);
 
 // QR scanner (GM65 hoặc MH-ET Live) trên Serial3
 QrScannerUtilityNonBlocking qrScanner(Serial3);
@@ -209,7 +211,7 @@ void setup()
     }
 
     // Sync time from modem
-    time.syncOnceBlocking();
+    timeConfig.syncOnceBlocking();
 }
 
 // =====================================================
@@ -218,7 +220,7 @@ void setup()
 
 void loop()
 {
-    currentUnixTime = time.nowUnixMs();
+    currentUnixTime = timeConfig.nowUnixMs();
     unsigned long now = millis();
 
     if (BT.available())
@@ -237,13 +239,15 @@ void loop()
             digitalWrite(IN1, LOW);
             digitalWrite(IN2, HIGH);
         }
-        else 
+        else
         {
             // Stop
             digitalWrite(IN1, LOW);
             digitalWrite(IN2, LOW);
         }
-    } else {
+    }
+    else
+    {
         digitalWrite(IN1, LOW);
         digitalWrite(IN2, LOW);
     }
@@ -309,6 +313,7 @@ void loop()
 
     static unsigned long lastGpsPrint = 0;
     static float lastLat = 0, lastLng = 0;
+    static unsigned long last_geolocation = 0;
 
     if (now - lastGpsPrint >= 1000)
     {
@@ -353,50 +358,39 @@ void loop()
         }
         else
         {
-            // không có GPS fix → indoor candidate
+            Serial.println(F("[GPS] No fix yet"));
             isInside = true;
         }
-    }
 
-    // -------------------------------------------------
-    // 3) Indoor logic – enqueue cell / geolocation tasks
-    // -------------------------------------------------
-    if (isInside)
-    {
-        // if we don't yet have CellInfo, query CPSI first
-        if (cellInfo == nullptr)
+        // -------------------------------------------------
+        // 3) Indoor logic – enqueue cell / geolocation tasks
+        // -------------------------------------------------
+            if (isInside && now - last_geolocation >= 10000)
         {
-            Serial.println(F("[INDOOR] No CellInfo yet, enqueue CellTowerQueryTask"));
-            cellInfo = new CellInfo();
+            
+            if (cellInfo.isOutdated)
+            {
 
-            NetworkTask *cellTask = new CellTowerQueryTask(
-                gsm,
-                *cellInfo);
-            netScheduler.enqueue(cellTask, TASK_PRIORITY_NORMAL);
-        }
-        else
-        {
-            // we have a CellInfo → call UnwiredLabs for approximate location
-            Serial.println(F("[INDOOR] Have CellInfo, enqueue QueryGeolocationApiTask"));
+                NetworkTask *cellTask = new CellTowerQueryTask(
+                    gsm,
+                    cellInfo);
+                netScheduler.enqueue(cellTask, TASK_PRIORITY_LOW);
+            }
+            else
+            {
+                // we have a CellInfo → call UnwiredLabs for approximate location
+                Serial.println(F("[INDOOR] Have CellInfo, enqueue QueryGeolocationApiTask"));
 
-            NetworkTask *geoTask = new QueryGeolocationApiTask(
-                http,
-                cellInfo,
-                &cur_lat,
-                &cur_lng);
-            netScheduler.enqueue(geoTask, TASK_PRIORITY_NORMAL);
+                NetworkTask *geoTask = new QueryGeolocationApiTask(
+                    http,
+                    cellInfo,
+                    cur_lat,
+                    cur_lng);
+                netScheduler.enqueue(geoTask, TASK_PRIORITY_LOW);
+            }
         }
+        
     }
-
-    // -------------------------------------------------
-    // 4) MQTT keep-alive
-    // -------------------------------------------------
-    gsm.stepMqtt();
-
-    // -------------------------------------------------
-    // 5) HTTP step (if your HttpConfiguration is non-blocking)
-    // -------------------------------------------------
-    http.stepHttp();
 
     // -------------------------------------------------
     // 6) PUBLISH TELEMETRY MỖI 5 GIÂY – via scheduler
@@ -435,13 +429,26 @@ void loop()
             payloadLen,
             MQTT_TOPIC);
         // Telemetry is low priority / skippable
-        netScheduler.enqueueIfSpace(teleTask, TASK_PRIORITY_LOW);
-    }
+        netScheduler.enqueue(teleTask, TASK_PRIORITY_NORMAL);
+    } 
 
     // -------------------------------------------------
     // 7) Run one network task from scheduler
     // -------------------------------------------------
     netScheduler.step();
 
-    // ❌ Không dùng delay() to đùng ở cuối loop
+    static unsigned long lastMaint = 0;
+    if (millis() - lastMaint > 200) // mỗi 200ms bơm 1 lần cho nhẹ nhàng
+    {
+        lastMaint = millis();
+
+        // Chỉ thêm nếu còn chỗ, và không cần eviction
+        netScheduler.enqueueIfSpace(
+            new MqttMaintenanceTask(gsm),
+            TASK_PRIORITY_LOW);
+
+        netScheduler.enqueueIfSpace(
+            new HttpMaintenanceTask(http),
+            TASK_PRIORITY_LOW);
+    } 
 }

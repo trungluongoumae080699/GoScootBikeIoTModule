@@ -9,18 +9,16 @@ class QueryGeolocationApiTask : public NetworkTask
 {
 private:
     HttpConfiguration &http;
-    CellInfo *cellPtr;   // pointer to parsed CellInfo (from CPSI)
-    float *latPtr;       // pointer to output latitude
-    float *lonPtr;       // pointer to output longitude
-    bool started   = false;
-    bool completed = false;
-    uint32_t perRequestTimeoutMs = 2000;   // ví dụ: 2s timeout
+    CellInfo &cellPtr;   // pointer to parsed CellInfo (from CPSI)
+    float &latPtr;       // pointer to output latitude
+    float &lonPtr;       // pointer to output longitude
+    uint32_t perRequestTimeoutMs = 2000;   // e.g. 2s timeout
 
 public:
     QueryGeolocationApiTask(HttpConfiguration &httpCfg,
-                            CellInfo *cellInfo,
-                            float *outLat,
-                            float *outLon)
+                            CellInfo &cellInfo,
+                            float &outLat,
+                            float &outLon)
         : http(httpCfg),
           cellPtr(cellInfo),
           latPtr(outLat),
@@ -28,33 +26,34 @@ public:
     {
     }
 
-    virtual void execute() override
+    // optional
+    bool isMandatory() const override { return false; }
+
+    void execute() override
     {
-        if (completed) return;
+        if (isCompleted())
+            return;
+
+        
 
         // -------- 1) First call: build body + start HTTP --------
-        if (!started)
+        if (!isStarted())
         {
-            if (!cellPtr || !latPtr || !lonPtr)
-            {
-                Serial.println(F("[GEO] Null pointer(s) in QueryGeolocationApiTask"));
-                completed = true;
-                return;
-            }
 
-            String body = cellPtr->buildLocationApiJson();
+
+            String body = cellPtr.buildLocationApiJson();
             if (body.length() == 0)
             {
                 Serial.println(F("[GEO] buildLocationApiJson() returned empty body"));
-                completed = true;
+                markCompleted();
                 return;
             }
 
-            // HTTP layer phải rảnh
+            // HTTP layer must be idle
             if (!http.isIdle())
             {
                 Serial.println(F("[GEO] HTTP busy, will retry start next tick"));
-                return;  // chờ vòng loop sau
+                return;  // wait for a later loop
             }
 
             Serial.println(F("[GEO] Sending HTTP POST to Unwired Labs (non-blocking)..."));
@@ -68,12 +67,12 @@ public:
             if (!ok)
             {
                 Serial.println(F("[GEO] Failed to start HTTP POST"));
-                completed = true;
+                markCompleted();
                 return;
             }
 
-            started = true;
-            return; // lần đầu chỉ mới gửi request
+            markStarted();
+            return; // first call only starts request
         }
 
         // -------- 2) After started: advance HTTP state machine --------
@@ -81,26 +80,25 @@ public:
 
         if (!http.isHttpDone())
         {
-            // chưa nhận xong / chưa timeout → chờ vòng loop sau
+            // not finished yet → wait next loop
             return;
         }
 
         // -------- 3) HTTP finished (OK or ERROR) --------
-        cellPtr = nullptr;
         String resp = http.getHttpResult();
         bool ok     = http.isHttpOk();
 
-        http.resetHttp();   // giải phóng cho task khác
+        http.resetHttp();   // free HTTP for other tasks
 
         if (!ok || resp.length() == 0)
         {
             Serial.println(F("[GEO] HTTP error or empty response from Unwired Labs"));
-            completed = true;
+            markCompleted();
             return;
         }
 
         // 4) Strip HTTP headers
-        int headerEnd  = resp.indexOf("\r\n\r\n");
+        int headerEnd   = resp.indexOf("\r\n\r\n");
         String jsonPart = (headerEnd >= 0) ? resp.substring(headerEnd + 4) : resp;
 
         Serial.println(F("[GEO] Raw JSON from server:"));
@@ -118,7 +116,7 @@ public:
                 if (statusVal.indexOf("ok") < 0 && statusVal.indexOf("OK") < 0)
                 {
                     Serial.println(F("[GEO] status is not ok"));
-                    completed = true;
+                    markCompleted();
                     return;
                 }
             }
@@ -131,7 +129,7 @@ public:
         if (latIndex < 0 || lonIndex < 0)
         {
             Serial.println(F("[GEO] Missing lat/lon fields in JSON"));
-            completed = true;
+            markCompleted();
             return;
         }
 
@@ -140,7 +138,7 @@ public:
         if (latColon < 0 || lonColon < 0)
         {
             Serial.println(F("[GEO] Malformed lat/lon fields"));
-            completed = true;
+            markCompleted();
             return;
         }
 
@@ -157,19 +155,29 @@ public:
             Serial.println(F("[GEO] Warning: parsed (0,0) – check JSON / API key"));
         }
 
-        *latPtr = latVal;
-        *lonPtr = lonVal;
+        if (latPtr) latPtr = latVal;
+        if (lonPtr) lonPtr = lonVal;
 
         Serial.print(F("[GEO] Parsed lat = "));
         Serial.println(latVal, 6);
         Serial.print(F("[GEO] Parsed lon = "));
         Serial.println(lonVal, 6);
 
-        completed = true;   // one-shot, done
+        markCompleted();   // one-shot, done
     }
 
-    bool isCompleted() const
+protected:
+    void markStarted() override
     {
-        return completed;
+        NetworkTask::markStarted();
+        // optional extra logging:
+        // Serial.println(F("[GEO] QueryGeolocationApiTask started"));
+    }
+
+    void markCompleted() override
+    {
+        Serial.println(F("[GEO] QueryGeolocationApiTask completed"));
+        cellPtr.isOutdated = true;
+        NetworkTask::markCompleted();
     }
 };

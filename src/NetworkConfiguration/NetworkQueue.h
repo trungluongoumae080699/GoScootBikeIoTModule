@@ -21,7 +21,7 @@ struct ScheduledTask
 class NetworkInterfaceScheduler
 {
 public:
-    static const uint8_t MAX_TASKS = 8; // tuỳ bạn chỉnh
+    static const uint8_t MAX_TASKS = 20; // tuỳ bạn chỉnh
 
     NetworkInterfaceScheduler()
         : _size(0) {}

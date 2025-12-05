@@ -11,7 +11,7 @@ public:
     // Task will fill outCell directly
     explicit CellTowerQueryTask(GsmConfiguration &gsmRef,
                                 CellInfo &outputCellInfo,
-                                uint32_t timeoutMs = 2000)
+                                uint32_t timeoutMs = 5000)
         : gsm(gsmRef),
           outCell(outputCellInfo),
           timeoutMs(timeoutMs)
@@ -23,11 +23,11 @@ public:
 
     void execute() override
     {
-        if (completed)
+        if (isCompleted())
             return; // already done, nothing to do
 
         // ----------------- FIRST CALL: send +CPSI? -----------------
-        if (!started)
+        if (!isStarted())
         {
             markStarted();
 
@@ -82,7 +82,7 @@ public:
         }
 
         // ----------------- TIMEOUT CHECK -----------------
-        if (millis() - startMs > timeoutMs)
+        if (millis() - getStartMs() > timeoutMs)
         {
             Serial.println(F("[CELL] CPSI timeout"));
             finalizeFromCpsi(); // try to parse if we did get a +CPSI line
@@ -94,38 +94,35 @@ public:
     bool success() const { return successFlag; }
     const String &getJson() const { return jsonResult; }
 
-    // optional helpers if scheduler wants them
-    bool isStarted()   const { return started; }
-    bool isCompleted() const { return completed; }
+    // optional: reuse base isStarted/isCompleted but keep these aliases if you like
+    bool isStartedLocal()   const { return isStarted(); }
+    bool isCompletedLocal() const { return isCompleted(); }
+
+protected:
+    // override to add logging but still call base to set the flag
+    void markStarted() override
+    {
+        NetworkTask::markStarted();
+        // (optional extra logs)
+        // Serial.println(F("[CELL] CellTowerQueryTask started"));
+    }
+
+    void markCompleted() override
+    {
+        Serial.println(F("[CELL] CellTowerQueryTask completed"));
+        NetworkTask::markCompleted();
+    }
 
 private:
     GsmConfiguration &gsm;
     CellInfo &outCell; // external object we update
 
     // internal state for this async task
-    bool     successFlag = false;
-    String   jsonResult;
-    String   cpsiLine;
+    bool   successFlag = false;
+    String jsonResult;
+    String cpsiLine;
 
-    // lifecycle / timing
-    bool     started   = false;
-    bool     completed = false;
-    uint32_t startMs   = 0;
-    uint32_t timeoutMs = 2000; // default 2s, can be overridden via ctor
-
-    void markStarted()
-    {
-        if (!started)
-        {
-            started = true;
-            startMs = millis();
-        }
-    }
-
-    void markCompleted()
-    {
-        completed = true;
-    }
+    uint32_t timeoutMs = 2000; // default 2s, ctor may override
 
     void finalizeFromCpsi()
     {
@@ -140,12 +137,7 @@ private:
         Serial.println(cpsiLine);
 
         // Fill the provided CellInfo reference
-        if (!outCell.parseCpsiLine(cpsiLine))
-        {
-            Serial.println(F("[CELL] parseCpsiLine failed"));
-            successFlag = false;
-            return;
-        }
+        outCell.parseCpsiLine(cpsiLine);
 
         jsonResult = outCell.buildLocationApiJson();
         if (jsonResult.length() == 0)

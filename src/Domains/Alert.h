@@ -39,18 +39,6 @@ struct Alert
     int64_t time;
 };
 
-inline void writeInt64LE(uint8_t *buf, int64_t val, int &offset)
-{
-    for (int i = 0; i < 8; i++)
-        buf[offset++] = (uint8_t)(val >> (8 * i));
-}
-
-inline void writeFloat32LE(uint8_t *buf, float v, int &offset)
-{
-    uint32_t raw = *((uint32_t *)&v);
-    for (int i = 0; i < 4; i++)
-        buf[offset++] = (uint8_t)(raw >> (8 * i));
-}
 
 inline int encodeAlert(const Alert &a, uint8_t *buffer)
 {

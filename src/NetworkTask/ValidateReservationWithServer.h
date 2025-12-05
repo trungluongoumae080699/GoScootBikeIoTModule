@@ -9,13 +9,11 @@ class ValidateTripWithServerTask : public NetworkTask
 {
 private:
     HttpConfiguration &http;
-    const char *url;       // endpoint, e.g. "http://your-backend/trip/validate"
-    String requestBody;    // JSON gửi lên server (QR JSON)
-    String *tripIdPtr;     // con trỏ tới biến tripId bên ngoài (update nếu isValid)
-    BikeState *bikeState;  // trạng thái xe (IDLE / INUSE / ...)
+    const char *url;            // endpoint, e.g. "http://your-backend/trip/validate"
+    String requestBody;         // JSON gửi lên server (QR JSON)
+    String *tripIdPtr;          // con trỏ tới biến tripId bên ngoài (update nếu isValid)
+    BikeState *bikeState;       // trạng thái xe (IDLE / INUSED / ...)
 
-    bool started   = false;
-    bool completed = false;
     uint32_t perRequestTimeoutMs = 2000;   // ví dụ: 2s timeout cho validate trip
 
 public:
@@ -39,13 +37,17 @@ public:
     {
     }
 
+    // Trip validation should NOT be dropped if possible
+    bool isMandatory() const override { return true; }
+
     // Task “tick” – gọi lặp lại trong loop() / scheduler
-    virtual void execute() override
+    void execute() override
     {
-        if (completed) return;
+        if (isCompleted())
+            return;
 
         // 1) Lần đầu: start HTTP POST (non-blocking)
-        if (!started)
+        if (!isStarted())
         {
             Serial.println(F("[TRIP] ValidateTripWithServerTask: starting HTTP POST"));
 
@@ -60,11 +62,11 @@ public:
             if (!ok)
             {
                 Serial.println(F("[TRIP] Failed to start HTTP POST"));
-                completed = true;   // one-shot, mark done (fail)
+                markCompleted();   // one-shot, mark done (fail)
                 return;
             }
 
-            started = true;
+            markStarted();
             return; // lần này chỉ mới gửi, chưa có gì để đọc
         }
 
@@ -86,12 +88,12 @@ public:
         if (!ok || resp.length() == 0)
         {
             Serial.println(F("[TRIP] HTTP error or empty response"));
-            completed = true;
+            markCompleted();
             return;
         }
 
         // 4) Tách header khỏi body
-        int headerEnd = resp.indexOf("\r\n\r\n");
+        int headerEnd   = resp.indexOf("\r\n\r\n");
         String jsonPart = (headerEnd >= 0) ? resp.substring(headerEnd + 4) : resp;
 
         Serial.println(F("[TRIP] Raw JSON from server:"));
@@ -168,7 +170,7 @@ public:
             {
                 Serial.println(F("[TRIP] Invalid response: missing isValid"));
             }
-            completed = true;
+            markCompleted();
             return;
         }
 
@@ -186,16 +188,11 @@ public:
 
             if (bikeState != nullptr)
             {
-                *bikeState = INUSED;  // hoặc BIKE_IN_USE tuỳ enum của bạn
-                Serial.println(F("[TRIP] bikeState -> INUSE"));
+                *bikeState = INUSED;  // hoặc enum cụ thể của bạn
+                Serial.println(F("[TRIP] bikeState -> INUSED"));
             }
         }
 
-        completed = true;  // one-shot task done
-    }
-
-    bool isCompleted() const
-    {
-        return completed;
+        markCompleted();  // one-shot task done
     }
 };

@@ -39,13 +39,12 @@ struct PublishMqttTask : public NetworkTask
 
     void execute() override
     {
-        if (completed)
+        if (isCompleted())
             return; // already done
 
-        if (!started)
+        if (!isStarted())
         {
             markStarted();
-            Serial.println(F("[TASK] PublishMqttTask started"));
         }
 
         if (!topic)
@@ -75,12 +74,24 @@ struct PublishMqttTask : public NetworkTask
         }
 
         markCompleted();
-        Serial.println(F("[TASK] PublishMqttTask completed"));
     }
 
     // Telemetry is skippable → NOT mandatory
     bool isMandatory() const override
     {
         return false;
+    }
+
+protected:
+    void markStarted() override
+    {
+        Serial.println(F("[TASK] PublishMqttTask started"));
+        NetworkTask::markStarted();
+    }
+
+    void markCompleted() override
+    {
+        Serial.println(F("[TASK] PublishMqttTask completed"));
+        NetworkTask::markCompleted();
     }
 };

@@ -6,6 +6,47 @@
 #include <TinyGsmClient.h>
 #include <time.h>
 
+// Converts a UTC broken-down time into Unix timestamp.
+// Works on Arduino (no timezone, no DST problems)
+static time_t timegm_arduino(const struct tm *tm)
+{
+    const int YEAR = tm->tm_year + 1900;
+    const int MONTH = tm->tm_mon + 1;
+
+    // Days before month
+    static const int daysBeforeMonth[] =
+        {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+
+    // Count days since epoch
+    int yearsSince1970 = YEAR - 1970;
+
+    // Count leap years since 1970
+    int leapDays =
+        (yearsSince1970 + 2) / 4 -
+        (yearsSince1970 + 70) / 100 +
+        (yearsSince1970 + 370) / 400;
+
+    // Total days
+    long days =
+        yearsSince1970 * 365L +
+        leapDays +
+        daysBeforeMonth[tm->tm_mon] +
+        (tm->tm_mday - 1);
+
+    // If current year is leap and month > Feb, add 1 day
+    if ((MONTH > 2) &&
+        ((YEAR % 4 == 0 && YEAR % 100 != 0) || (YEAR % 400 == 0)))
+    {
+        days += 1;
+    }
+
+    // build timestamp
+    return days * 86400L +
+           tm->tm_hour * 3600L +
+           tm->tm_min * 60L +
+           tm->tm_sec;
+}
+
 /**
  * TimeUtility
  *
@@ -35,7 +76,7 @@ struct TimeConfiguration
     // mốc thời gian từ modem (ms since epoch)
     int64_t baseUnixMs = -1;
     // millis() tại thời điểm sync
-    uint32_t baseMillis = 0;
+    int64_t baseMillis = 0;
     bool valid = false;
 
     explicit TimeConfiguration(TinyGsm &m)
@@ -57,6 +98,7 @@ struct TimeConfiguration
         }
 
         baseUnixMs = ts;
+        Serial.println((long)baseUnixMs);
         baseMillis = millis();
         valid = true;
 
@@ -75,6 +117,16 @@ struct TimeConfiguration
             return -1;
 
         uint32_t elapsed = millis() - baseMillis; // wrap-safe
+
+        /*  Serial.print(F("[TIME] baseUnixMs = "));
+         Serial.println((long)baseUnixMs);
+
+         Serial.print(F("[TIME] elapsed = "));
+         Serial.println((unsigned long)elapsed);
+
+         Serial.print(F("[TIME] nowUnixMs = "));
+         Serial.println((long)(baseUnixMs + (int64_t)elapsed)); */
+
         return baseUnixMs + (int64_t)elapsed;
     }
 
@@ -90,7 +142,6 @@ struct TimeConfiguration
     bool hasValidTime() const { return valid; }
 
 private:
-    // Hàm gốc của em, chỉ dùng nội bộ để lấy mốc ban đầu
     int64_t getUnixTimestampFromModem(uint32_t timeoutMs)
     {
         modem.sendAT("+CCLK?");
@@ -140,8 +191,8 @@ private:
             Serial.println(F("CCLK line format invalid"));
             return -1;
         }
-
         String datetime = cclkLine.substring(quote1 + 1, quote2);
+
         int y = datetime.substring(0, 2).toInt() + 2000;
         int mo = datetime.substring(3, 5).toInt();
         int d = datetime.substring(6, 8).toInt();
@@ -149,6 +200,9 @@ private:
         int mi = datetime.substring(12, 14).toInt();
         int s = datetime.substring(15, 17).toInt();
 
+        // ---------------------------
+        // Build tm struct (UTC)
+        // ---------------------------
         tm timeinfo{};
         timeinfo.tm_year = y - 1900;
         timeinfo.tm_mon = mo - 1;
@@ -157,10 +211,21 @@ private:
         timeinfo.tm_min = mi;
         timeinfo.tm_sec = s;
 
-        time_t t = mktime(&timeinfo);
-        Serial.print(F("Unix seconds: "));
-        Serial.println((long)t);
+        // Extract offset "+28" → +2.8 hours = UTC+2h48m (INSANE)
+        // SIM7600 uses *quarters of an hour* (15 minutes)
+        //
+        // "+28" = +2.0 hours + 8 * 15min = +2h + 2h = *+4 HOURS*
+        //
+        int tz_quarters = datetime.substring(18).toInt(); // "28"
+        int tz_offset_seconds = tz_quarters * 15 * 60;
 
-        return (int64_t)t * 1000LL;
+        // Convert local → UTC
+        time_t unixLocal = timegm_arduino(&timeinfo);
+        time_t unixUtc = unixLocal - tz_offset_seconds;
+
+        Serial.print("Unix seconds (UTC): ");
+        Serial.println((long)unixUtc);
+
+        return (int64_t)unixUtc * 1000LL;
     }
 };
