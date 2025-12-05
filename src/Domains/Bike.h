@@ -12,4 +12,12 @@ struct Bike {
   int32_t battery;
 };
 
+enum BikeState {
+    IDLE,
+    INUSED,
+    OUT_OF_BOUND
+};
+
+
+
 #endif

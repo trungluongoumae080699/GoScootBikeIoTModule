@@ -1,5 +1,4 @@
-#ifndef TELEMETRY_H
-#define TELEMETRY_H
+#pragma once
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -87,4 +86,3 @@ inline int encodeTelemetry(const Telemetry& t, uint8_t* buffer) {
 }
 
 
-#endif
