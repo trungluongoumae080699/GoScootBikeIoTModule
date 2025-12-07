@@ -8,6 +8,9 @@
 #include <time.h>
 #include <LiquidCrystal_I2C.h>
 #include <SoftwareSerial.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+#include <SPI.h>
 
 #include "Domains/Bike.h"
 #include "Domains/Telemetry.h"
@@ -28,6 +31,18 @@
 #include "NetworkTask/ValidateReservationWithServer.h"
 #include "NetworkTask/HttpMaintenanceTask.h"
 #include "NetworkTask/MqttMaintenanceTask.h"
+#include "NetworkTask/ValidateReservationWithServerMqtt.h"
+
+#define TFT_CS 10
+#define TFT_DC 9
+#define TFT_RST 8
+#define TFT_MISO 4
+#define TFT_SCK 6
+#define TFT_MOSI 7
+#define TFT_LED 5
+
+
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RST, TFT_MISO);
 
 // =====================================================
 //  GLOBAL CONFIG
@@ -40,16 +55,16 @@ const char GPRS_PASS[] = "";
 
 // ----------------- MQTT config -----------------
 const char *MQTT_HOST = "0.tcp.ap.ngrok.io";
-const uint16_t MQTT_PORT = 12123;
+const uint16_t MQTT_PORT = 16341;
 const char *MQTT_USER = "BIK_298A1J35";
 const char *MQTT_PASS = "TrungLuong080699!!!";
 const char *MQTT_TOPIC = "/telemetry/BIK_298A1J35";
-const char *ALERT_TOPIC = "/alerts/BIK_298A1J35"; // alerts topic
+const char *ALERT_TOPIC = "alerts/BIK_298A1J35"; // alerts topic
 
 // ----------------- Objects / utilities -----------------
 
 Bike currentBike;
-CellInfo cellInfo; 
+CellInfo cellInfo;
 
 // I2C LCD 16x2 @ 0x27
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -96,6 +111,23 @@ BikeState bikeState = IDLE;
 
 // trip id received from server
 String currentTripId;
+
+String lcdDisplayLine1 = "Scan QR Code";
+String lcdDisplayLine2 = "To start trip!";
+
+// in some .cpp
+ValidateTripWithServerTaskMqtt *g_activeValidationTask = nullptr;
+
+void globalMqttCallback(char *topic, uint8_t *payload, unsigned int length)
+{
+    Serial.println(F("[MQTT] Message arrived"));
+    if (g_activeValidationTask)
+    {
+        g_activeValidationTask->onMqttMessage(topic,
+                                              (const uint8_t *)payload,
+                                              length);
+    }
+}
 
 // =====================================================
 //  Helper functions
@@ -174,7 +206,15 @@ bool isOutsideAllowedArea(float lat, float lng)
 
 void setup()
 {
-    BT.begin(9600); // HC-06 default baud rate
+    pinMode(TFT_LED, OUTPUT);
+    digitalWrite(TFT_LED, HIGH); // turn on backlight
+    tft.begin();
+    tft.fillScreen(ILI9341_RED);
+    tft.setCursor(20, 20);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setTextSize(3);
+    tft.println("Hello Trung!");
+    /* BT.begin(9600); // HC-06 default baud rate
     pinMode(IN1, OUTPUT);
     pinMode(IN2, OUTPUT);
     // stop motors at start
@@ -187,10 +227,6 @@ void setup()
     lcd.init();
     lcd.backlight();
     lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Scan QR Code");
-    lcd.setCursor(0, 1);
-    lcd.print("to start trip!");
 
     randomSeed(analogRead(A0));
 
@@ -212,6 +248,8 @@ void setup()
 
     // Sync time from modem
     timeConfig.syncOnceBlocking();
+    gsm.mqtt.connected();
+    gsm.mqtt.setCallback(globalMqttCallback); */
 }
 
 // =====================================================
@@ -220,102 +258,118 @@ void setup()
 
 void loop()
 {
-    currentUnixTime = timeConfig.nowUnixMs();
-    unsigned long now = millis();
+    /*  currentUnixTime = timeConfig.nowUnixMs();
+     unsigned long now = millis();
+     lcd.setCursor(0, 0);
+     lcd.print(lcdDisplayLine1);
+     lcd.setCursor(0, 1);
+     lcd.print(lcdDisplayLine2);
 
-    if (BT.available())
-    {
-        char cmd = BT.read();
-        if (cmd == '1' && bikeState == INUSED)
-        {
+     if (g_activeValidationTask->isCompleted()){
+         g_activeValidationTask = nullptr;
+     }
 
-            // Forward
-            digitalWrite(IN1, HIGH);
-            digitalWrite(IN2, LOW);
-        }
-        else if (cmd == '2' && bikeState == INUSED)
-        {
-            // Backward
-            digitalWrite(IN1, LOW);
-            digitalWrite(IN2, HIGH);
-        }
-        else
-        {
-            // Stop
-            digitalWrite(IN1, LOW);
-            digitalWrite(IN2, LOW);
-        }
-    }
-    else
-    {
-        digitalWrite(IN1, LOW);
-        digitalWrite(IN2, LOW);
-    }
+     if (BT.available())
+     {
+         char cmd = BT.read();
+         if (cmd == '1' && bikeState == INUSED)
+         {
 
-    // -------------------------------------------------
-    // 1) QR SCANNER – ONLY when bike is IDLE
-    // -------------------------------------------------
-    qrScanner.step();
+             // Forward
+             digitalWrite(IN1, HIGH);
+             digitalWrite(IN2, LOW);
+         }
+         else if (cmd == '2' && bikeState == INUSED)
+         {
+             // Backward
+             digitalWrite(IN1, LOW);
+             digitalWrite(IN2, HIGH);
+         }
+         else
+         {
+             // Stop
+             digitalWrite(IN1, LOW);
+             digitalWrite(IN2, LOW);
+         }
+     }
+     else
+     {
+         digitalWrite(IN1, LOW);
+         digitalWrite(IN2, LOW);
+     }
 
-    if (qrScanner.isScanReady())
-    {
-        String qrCode = qrScanner.takeResult();
-        Serial.print(F("[QR] JSON: "));
-        Serial.println(qrCode);
+     // -------------------------------------------------
+     // 1) QR SCANNER – ONLY when bike is IDLE
+     // -------------------------------------------------
+     qrScanner.step();
 
-        // Nếu xe đang IN_USE thì không cho scan
-        if (bikeState != IDLE)
-        {
-            Serial.println(F("[QR] Ignored: bike already IN_USE"));
-            lcd.clear();
-            lcd.setCursor(0, 0);
-            lcd.print("Bike in use");
-            lcd.setCursor(0, 1);
-            lcd.print("Cannot scan");
-        }
-        else
-        {
-            bool ok = validateTripJson(qrCode);
-            if (ok)
-            {
-                Serial.println(F("[QR] Valid Trip JSON"));
-                lcd.clear();
-                lcd.setCursor(0, 0);
-                lcd.print("QR OK");
-                lcd.setCursor(0, 1);
-                lcd.print("Validating...");
+     if (qrScanner.isScanReady())
+     {
+         String qrCode = qrScanner.takeResult();
+         Serial.print(F("[QR] JSON: "));
+         Serial.println(qrCode);
 
-                // ƯU TIÊN Reservation validation trên HTTP
-                // Enqueue reservation validation request - task priority critical
-                NetworkTask *task = new ValidateTripWithServerTask(
-                    http,
-                    "http://your-backend/trip/validate",
-                    qrCode,
-                    &currentTripId, &bikeState);
-                netScheduler.enqueue(task, TASK_PRIORITY_CRITICAL);
-            }
-            else
-            {
-                Serial.println(F("[QR] Invalid Trip JSON"));
-                lcd.clear();
-                lcd.setCursor(0, 0);
-                lcd.print("Invalid QR");
-                lcd.setCursor(0, 1);
-                lcd.print("Please try again");
-            }
-        }
-    }
+         // Nếu xe đang IN_USE thì không cho scan
+         if (bikeState != IDLE)
+         {
+             Serial.println(F("[QR] Ignored: bike already IN_USE"));
+             lcd.clear();
+             lcd.setCursor(0, 0);
+             lcd.print("Bike in use");
+             lcd.setCursor(0, 1);
+             lcd.print("Cannot scan");
+         }
+         else
+         {
+             Trip trip = Trip();
+             trip.current_lat = last_gps_lat;
+             trip.current_lng = last_gps_long;
+             bool ok = parseTripJson(qrCode, trip);
 
-    // -------------------------------------------------
-    // 2) GPS – cập nhật vị trí, không đụng LCD
-    // -------------------------------------------------
-    gpsConfiguration.update();
+             if (ok)
+             {
+                 Serial.println(F("[QR] Valid Trip JSON"));
+                 lcd.clear();
+                 lcd.setCursor(0, 0);
+                 lcd.print("QR OK");
+                 lcd.setCursor(0, 1);
+                 lcd.print("Validating...");
 
-    static unsigned long lastGpsPrint = 0;
-    static float lastLat = 0, lastLng = 0;
-    static unsigned long last_geolocation = 0;
+                 // ƯU TIÊN Reservation validation trên HTTP
+                 // Enqueue reservation validation request - task priority critical
+                 NetworkTask *task = new ValidateTripWithServerTaskMqtt(
+                     gsm,
+                     trip,
+                     "/reservation/BIK_298A1J35/validate",
+                     "/reservation/BIK_298A1J35/response",
+                     currentTripId,
+                     bikeState,
+                     lcdDisplayLine1,
+                     lcdDisplayLine2);
+                 netScheduler.enqueue(task, TASK_PRIORITY_CRITICAL);
+             }
+             else
+             {
+                 Serial.println(F("[QR] Invalid Trip JSON"));
+                 lcd.clear();
+                 lcd.setCursor(0, 0);
+                 lcd.print("Invalid QR");
+                 lcd.setCursor(0, 1);
+                 lcd.print("Please try again");
+             }
+         }
+     }
 
-    if (now - lastGpsPrint >= 1000)
+     // -------------------------------------------------
+     // 2) GPS – cập nhật vị trí, không đụng LCD
+     // -------------------------------------------------
+     gpsConfiguration.update();
+
+     static unsigned long lastGpsPrint = 0;
+     static float lastLat = 0, lastLng = 0;
+     static unsigned long last_geolocation = 0; */
+
+    /* if (now - lastGpsPrint >= 1000)
     {
         lastGpsPrint = now;
         gpsConfiguration.printDebug();
@@ -367,7 +421,7 @@ void loop()
         // -------------------------------------------------
             if (isInside && now - last_geolocation >= 10000)
         {
-            
+
             if (cellInfo.isOutdated)
             {
 
@@ -389,66 +443,67 @@ void loop()
                 netScheduler.enqueue(geoTask, TASK_PRIORITY_LOW);
             }
         }
-        
-    }
+
+    } */
 
     // -------------------------------------------------
     // 6) PUBLISH TELEMETRY MỖI 5 GIÂY – via scheduler
     // -------------------------------------------------
-    static unsigned long lastTelemetry = 0;
-    if (now - lastTelemetry >= 5000)
-    {
-        lastTelemetry = now;
+    /*     static unsigned long lastTelemetry = 0;
+        if (now - lastTelemetry >= 5000)
+        {
+            lastTelemetry = now;
 
-        // float vbatt = readBatteryVoltage();
-        int percent = 100;
+            // float vbatt = readBatteryVoltage();
+            int percent = 100;
 
-        currentBike.longitude = lastLng;
-        currentBike.latitude = lastLat;
-        currentBike.battery = percent;
+            currentBike.longitude = lastLng;
+            currentBike.latitude = lastLat;
+            currentBike.battery = percent;
 
-        Telemetry t;
-        t.id = generateUUID();
-        t.bikeId = currentBike.userName;
-        t.longitude = lastLng;
-        t.latitude = lastLat;
-        t.battery = percent;
-        t.time = currentUnixTime;
-        t.last_gps_contact_time = last_gps_contact_time;
-        t.last_gps_lat = last_gps_lat;
-        t.last_gps_long = last_gps_long;
+            Telemetry t;
+            t.id = generateUUID();
+            t.bikeId = currentBike.userName;
+            t.longitude = lastLng;
+            t.latitude = lastLat;
+            t.battery = percent;
+            t.time = currentUnixTime;
+            t.last_gps_contact_time = last_gps_contact_time;
+            t.last_gps_lat = last_gps_lat;
+            t.last_gps_long = last_gps_long;
 
-        uint8_t buffer[256];
-        int payloadLen = encodeTelemetry(t, buffer);
+            uint8_t buffer[256];
+            int payloadLen = encodeTelemetry(t, buffer);
 
-        Serial.println(F("[TEL] Enqueue telemetry publish"));
+            Serial.println(F("[TEL] Enqueue telemetry publish"));
 
-        NetworkTask *teleTask = new PublishMqttTask(
-            gsm,
-            buffer,
-            payloadLen,
-            MQTT_TOPIC);
-        // Telemetry is low priority / skippable
-        netScheduler.enqueue(teleTask, TASK_PRIORITY_NORMAL);
-    } 
+            NetworkTask *teleTask = new PublishMqttTask(
+                gsm,
+                buffer,
+                payloadLen,
+                MQTT_TOPIC);
+            // Telemetry is low priority / skippable
+            netScheduler.enqueue(teleTask, TASK_PRIORITY_NORMAL);
+        } */
 
     // -------------------------------------------------
     // 7) Run one network task from scheduler
     // -------------------------------------------------
-    netScheduler.step();
+    /*  netScheduler.step();
 
-    static unsigned long lastMaint = 0;
-    if (millis() - lastMaint > 200) // mỗi 200ms bơm 1 lần cho nhẹ nhàng
-    {
-        lastMaint = millis();
 
-        // Chỉ thêm nếu còn chỗ, và không cần eviction
-        netScheduler.enqueueIfSpace(
-            new MqttMaintenanceTask(gsm),
-            TASK_PRIORITY_LOW);
+     static unsigned long lastMaint = 0;
+     if (millis() - lastMaint > 200) // mỗi 200ms bơm 1 lần cho nhẹ nhàng
+     {
+         lastMaint = millis();
 
-        netScheduler.enqueueIfSpace(
-            new HttpMaintenanceTask(http),
-            TASK_PRIORITY_LOW);
-    } 
+         // Chỉ thêm nếu còn chỗ, và không cần eviction
+         netScheduler.enqueueIfSpace(
+             new MqttMaintenanceTask(gsm),
+             TASK_PRIORITY_LOW);
+
+         netScheduler.enqueueIfSpace(
+             new HttpMaintenanceTask(http),
+             TASK_PRIORITY_LOW);
+     }   */
 }

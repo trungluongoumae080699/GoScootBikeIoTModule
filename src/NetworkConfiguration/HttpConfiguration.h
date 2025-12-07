@@ -9,7 +9,6 @@ struct HttpConfiguration
     TinyGsmClient &netClient;
     PubSubClient *mqtt;            // optional, có thể nullptr
     unsigned long httpTimeoutMs = 10000;  // default 10s (can be set from GsmConfiguration)
-
     explicit HttpConfiguration(TinyGsmClient &client, PubSubClient *mqttClient = nullptr)
         : netClient(client), mqtt(mqttClient) {}
 

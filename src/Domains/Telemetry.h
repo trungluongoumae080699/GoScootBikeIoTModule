@@ -15,6 +15,7 @@ struct Telemetry {
   int64_t last_gps_contact_time;
 };
 
+
 // ---- helpers for little endian writes ----
 inline void writeInt32LE(uint8_t* buf, int32_t value, int& offset) {
   uint32_t v = static_cast<uint32_t>(value);

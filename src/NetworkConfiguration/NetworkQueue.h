@@ -51,8 +51,8 @@ public:
             _queue[0].priority = prio;
             _size = 1;
 
-            Serial.print(F("[SCHED] Enqueued first task, prio="));
-            Serial.println((int)prio);
+            //Serial.print(F("[SCHED] Enqueued first task, prio="));
+            //Serial.println((int)prio);
             debugPrintQueue();
             return true;
         }
@@ -61,8 +61,8 @@ public:
         if (_size < MAX_TASKS)
         {
             insertByPriority(task, prio);
-            Serial.print(F("[SCHED] Enqueued task, prio="));
-            Serial.println((int)prio);
+            //Serial.print(F("[SCHED] Enqueued task, prio="));
+            //Serial.println((int)prio);
             debugPrintQueue();
             return true;
         }
@@ -75,18 +75,18 @@ public:
         if (prio <= lowestPrio)
         {
             // task mới không quan trọng hơn -> bỏ luôn
-            Serial.print(F("[SCHED] Queue full, new prio="));
-            Serial.print((int)prio);
-            Serial.print(F(" <= lowest="));
-            Serial.print((int)lowestPrio);
-            Serial.println(F(" -> drop new task"));
+            //Serial.print(F("[SCHED] Queue full, new prio="));
+            //Serial.print((int)prio);
+            //Serial.print(F(" <= lowest="));
+            //Serial.print((int)lowestPrio);
+            //Serial.println(F(" -> drop new task"));
             delete task;
             return false;
         }
 
         // task mới quan trọng hơn -> xoá task priority thấp nhất, chèn task mới
-        Serial.print(F("[SCHED] Queue full, evicting task with prio="));
-        Serial.println((int)lowestPrio);
+        //Serial.print(F("[SCHED] Queue full, evicting task with prio="));
+        //Serial.println((int)lowestPrio);
 
         if (_queue[lowestIdx].task)
         {
@@ -100,8 +100,8 @@ public:
         // Bây giờ chèn task mới như bình thường vào mảng [0.._size-1]
         insertByPriority(task, prio);
 
-        Serial.print(F("[SCHED] Enqueued (with eviction), prio="));
-        Serial.println((int)prio);
+        //Serial.print(F("[SCHED] Enqueued (with eviction), prio="));
+        //Serial.println((int)prio);
         debugPrintQueue();
         return true;
     }
@@ -114,7 +114,7 @@ public:
 
         if (_size >= MAX_TASKS)
         {
-            Serial.println(F("[SCHED] Queue full, skipped non-mandatory task"));
+            //Serial.println(F("[SCHED] Queue full, skipped non-mandatory task"));
             delete task; // tránh leak
             return false;
         }
@@ -168,8 +168,8 @@ public:
         // Nếu task đã xong -> xoá
         if (current.task->isCompleted())
         {
-            Serial.print(F("[SCHED] Task completed, prio="));
-            Serial.println((int)current.priority);
+            //Serial.print(F("[SCHED] Task completed, prio="));
+            //Serial.println((int)current.priority);
 
             delete current.task;
             current.task = nullptr;
@@ -233,15 +233,15 @@ private:
 
     void debugPrintQueue()
     {
-        Serial.print(F("[SCHED] Queue size="));
-        Serial.print(_size);
-        Serial.print(F(" ["));
+        //Serial.print(F("[SCHED] Queue size="));
+        //Serial.print(_size);
+        //Serial.print(F(" ["));
         for (uint8_t i = 0; i < _size; ++i)
         {
             Serial.print((int)_queue[i].priority);
             if (i + 1 < _size)
                 Serial.print(',');
         }
-        Serial.println(']');
+        //Serial.println(']');
     }
 };

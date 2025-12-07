@@ -9,12 +9,14 @@ class ValidateTripWithServerTask : public NetworkTask
 {
 private:
     HttpConfiguration &http;
-    const char *url;            // endpoint, e.g. "http://your-backend/trip/validate"
-    String requestBody;         // JSON gửi lên server (QR JSON)
-    String *tripIdPtr;          // con trỏ tới biến tripId bên ngoài (update nếu isValid)
-    BikeState *bikeState;       // trạng thái xe (IDLE / INUSED / ...)
+    const char *url;      // endpoint, e.g. "http://your-backend/trip/validate"
+    String requestBody;   // JSON gửi lên server (QR JSON)
+    String &tripIdPtr;    // con trỏ tới biến tripId bên ngoài (update nếu isValid)
+    BikeState &bikeState; // trạng thái xe (IDLE / INUSED / ...)
+    String &lcdDisplayLine1;
+    String &lcdDisplayLine2;
 
-    uint32_t perRequestTimeoutMs = 2000;   // ví dụ: 2s timeout cho validate trip
+    uint32_t perRequestTimeoutMs = 2000; // ví dụ: 2s timeout cho validate trip
 
 public:
     /**
@@ -26,14 +28,16 @@ public:
      */
     ValidateTripWithServerTask(HttpConfiguration &httpCfg,
                                const char *endpointUrl,
-                               const String &bodyJson,
-                               String *tripIdOut,
-                               BikeState *bikeStatePtr)
+                               const String bodyJson,
+                               String &tripIdOut,
+                               BikeState &bikeStatePtr,
+                               String &line1,
+                               String &line2)
         : http(httpCfg),
           url(endpointUrl),
           requestBody(bodyJson),
           tripIdPtr(tripIdOut),
-          bikeState(bikeStatePtr)
+          bikeState(bikeStatePtr), lcdDisplayLine1(line1), lcdDisplayLine2(line2)
     {
     }
 
@@ -62,7 +66,7 @@ public:
             if (!ok)
             {
                 Serial.println(F("[TRIP] Failed to start HTTP POST"));
-                markCompleted();   // one-shot, mark done (fail)
+                markCompleted(); // one-shot, mark done (fail)
                 return;
             }
 
@@ -81,9 +85,9 @@ public:
 
         // 3) HTTP đã xong (OK hoặc ERROR)
         String resp = http.getHttpResult();
-        bool ok     = http.isHttpOk();
+        bool ok = http.isHttpOk();
 
-        http.resetHttp();   // giải phóng HTTP layer cho task khác
+        http.resetHttp(); // giải phóng HTTP layer cho task khác
 
         if (!ok || resp.length() == 0)
         {
@@ -93,7 +97,7 @@ public:
         }
 
         // 4) Tách header khỏi body
-        int headerEnd   = resp.indexOf("\r\n\r\n");
+        int headerEnd = resp.indexOf("\r\n\r\n");
         String jsonPart = (headerEnd >= 0) ? resp.substring(headerEnd + 4) : resp;
 
         Serial.println(F("[TRIP] Raw JSON from server:"));
@@ -104,7 +108,7 @@ public:
 
         // --- parse isValid ---
         bool parsedIsValid = false;
-        bool isValidValue  = false;
+        bool isValidValue = false;
 
         int isValidIdx = jsonPart.indexOf("\"isValid\"");
         if (isValidIdx >= 0)
@@ -128,71 +132,51 @@ public:
                 if (boolStr.startsWith("true"))
                 {
                     parsedIsValid = true;
-                    isValidValue  = true;
+                    isValidValue = true;
+
+                    String idValue = "";
+                    int idIdx = jsonPart.indexOf("\"id\"");
+                    if (idIdx >= 0)
+                    {
+                        int colon = jsonPart.indexOf(':', idIdx);
+                        if (colon > 0)
+                        {
+                            int firstQuote = jsonPart.indexOf('"', colon + 1);
+                            if (firstQuote >= 0)
+                            {
+                                int secondQuote = jsonPart.indexOf('"', firstQuote + 1);
+                                if (secondQuote > firstQuote)
+                                {
+                                    idValue = jsonPart.substring(firstQuote + 1, secondQuote);
+                                }
+                            }
+                        }
+                    }
+                    if (idValue.length() > 0 && idValue == "BIK_298A1J35")
+                    {
+                        Serial.print(F("[TRIP] isValid=true, tripId="));
+                        Serial.println(idValue);
+                        lcdDisplayLine1 = "Trip Validated!";
+                        lcdDisplayLine2 = "Enjoy your ride!";
+                        tripIdPtr = idValue;
+                        bikeState = INUSED;
+                    }
+                    else
+                    {
+                        lcdDisplayLine1 = "Bike Id mismatch!";
+                        lcdDisplayLine2 = "Validation failed!";
+                    }
                 }
                 else if (boolStr.startsWith("false"))
                 {
                     parsedIsValid = true;
-                    isValidValue  = false;
+                    isValidValue = false;
+                    lcdDisplayLine1 = "Bike validation failed";
+                    lcdDisplayLine2 = "Please try again";
                 }
             }
         }
 
-        // --- parse id (string) ---
-        String idValue = "";
-        int idIdx = jsonPart.indexOf("\"id\"");
-        if (idIdx >= 0)
-        {
-            int colon = jsonPart.indexOf(':', idIdx);
-            if (colon > 0)
-            {
-                int firstQuote = jsonPart.indexOf('"', colon + 1);
-                if (firstQuote >= 0)
-                {
-                    int secondQuote = jsonPart.indexOf('"', firstQuote + 1);
-                    if (secondQuote > firstQuote)
-                    {
-                        idValue = jsonPart.substring(firstQuote + 1, secondQuote);
-                    }
-                }
-            }
-        }
-
-        if (!parsedIsValid)
-        {
-            Serial.println(F("[TRIP] Could not parse isValid field"));
-            if (idValue.length() > 0)
-            {
-                Serial.print(F("[TRIP] Server message: "));
-                Serial.println(idValue);
-            }
-            else
-            {
-                Serial.println(F("[TRIP] Invalid response: missing isValid"));
-            }
-            markCompleted();
-            return;
-        }
-
-        Serial.print(F("[TRIP] isValid = "));
-        Serial.println(isValidValue ? F("true") : F("false"));
-        Serial.print(F("[TRIP] id / reason = "));
-        Serial.println(idValue);
-
-        // 5) Nếu hợp lệ, cập nhật tripId + bikeState
-        if (isValidValue && tripIdPtr != nullptr && idValue.length() > 0)
-        {
-            *tripIdPtr = idValue;
-            Serial.print(F("[TRIP] tripId updated to: "));
-            Serial.println(*tripIdPtr);
-
-            if (bikeState != nullptr)
-            {
-                *bikeState = INUSED;  // hoặc enum cụ thể của bạn
-                Serial.println(F("[TRIP] bikeState -> INUSED"));
-            }
-        }
-
-        markCompleted();  // one-shot task done
+        markCompleted(); // one-shot task done
     }
 };
