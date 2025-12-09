@@ -1,10 +1,12 @@
 #pragma once
 
 #include <Arduino.h>
+#include <SoftwareSerial.h>
+
 
 struct QrScannerUtilityNonBlocking
 {
-    HardwareSerial &serial;
+    SoftwareSerial &serial;
 
     // Internal buffers
     String buffer;    // accumulating current line
@@ -15,7 +17,7 @@ struct QrScannerUtilityNonBlocking
     size_t maxLength      = 512;     // safety guard for crazy-long QR
     char   lineTerminator = '\n';    // we treat CR/LF as end of code
 
-    explicit QrScannerUtilityNonBlocking(HardwareSerial &s)
+    explicit QrScannerUtilityNonBlocking(SoftwareSerial &s)
         : serial(s)
     {}
 

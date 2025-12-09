@@ -6,11 +6,8 @@
 #include <TinyGPSPlus.h>
 #include <HardwareSerial.h>
 #include <time.h>
-#include <LiquidCrystal_I2C.h>
 #include <SoftwareSerial.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_ILI9341.h>
-#include <SPI.h>
+#include <Dabble.h>
 
 #include "Domains/Bike.h"
 #include "Domains/Telemetry.h"
@@ -32,17 +29,76 @@
 #include "NetworkTask/HttpMaintenanceTask.h"
 #include "NetworkTask/MqttMaintenanceTask.h"
 #include "NetworkTask/ValidateReservationWithServerMqtt.h"
+#include "BatteryManagement/BatteryStateManager.h"
+#include "ImuConfiguration/ImuConfiguraton.h"
 
-#define TFT_CS 10
-#define TFT_DC 9
-#define TFT_RST 8
-#define TFT_MISO 4
-#define TFT_SCK 6
-#define TFT_MOSI 7
-#define TFT_LED 5
+#include <Wire.h>
+#include <U8g2lib.h>
+#include <qrcode.h>
+#include <UI/DisplayTask.h>
+#include <UI/App_logo.h>
+
+#define STRAIGHT_IN1 4
+#define STRAIGHT_IN2 7
+#define BACK_IN1 5
+#define BACK_IN2 6
 
 
-Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RST, TFT_MISO);
+U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(
+    U8G2_R0,
+    U8X8_PIN_NONE  // reset pin not used
+);
+
+SoftwareSerial qrSerial(15, 14);
+Adafruit_INA219 ina219;
+
+// GPS trên Serial1 (NEO-M10)
+GpsConfiguration gpsConfiguration(&Serial1);
+
+// GSM configuration (Serial2 = modem)
+GsmConfiguration gsm(
+    Serial2,
+    APN, GPRS_USER, GPRS_PASS,
+    MQTT_HOST, MQTT_PORT,
+    MQTT_USER, MQTT_PASS);
+
+// HTTP utility (dùng netClient + mqtt bên trong gsm)
+HttpConfiguration http(gsm.netClient, &gsm.mqtt);
+
+// Time from modem
+TimeConfiguration timeConfig(gsm.modem);
+
+// QR scanner (GM65 hoặc MH-ET Live) trên Serial3
+QrScannerUtilityNonBlocking qrScanner(qrScanner);
+
+// Network scheduler
+NetworkInterfaceScheduler netScheduler;
+
+int batteryLevel = 100;
+float currentSpeedKmh = 0;
+bool toBeUpdated = true;
+DisplayPage currentPage = DisplayPage::QrScan;
+
+
+DisplayTask displayTask(
+    currentSpeedKmh,
+    batteryLevel,
+    currentPage,
+    toBeUpdated,
+    nullptr, // no default bitmap
+    "Scan to ride..." // example QR text
+);
+
+BatteryStateManager batteryManager(ina219, batteryLevel);
+
+int16_t accelX, accelY, accelZ;
+int16_t gyroRollRate, gyroPitchRate, gyroYawRate;
+
+ImuConfiguration imu(
+    accelX, accelY, accelZ,
+    gyroRollRate, gyroPitchRate, gyroYawRate
+);
+
 
 // =====================================================
 //  GLOBAL CONFIG
@@ -66,38 +122,7 @@ const char *ALERT_TOPIC = "alerts/BIK_298A1J35"; // alerts topic
 Bike currentBike;
 CellInfo cellInfo;
 
-// I2C LCD 16x2 @ 0x27
-LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// GPS trên Serial1 (NEO-M10)
-GpsConfiguration gpsConfiguration(&Serial1);
-
-// GSM configuration (Serial2 = modem)
-GsmConfiguration gsm(
-    Serial2,
-    APN, GPRS_USER, GPRS_PASS,
-    MQTT_HOST, MQTT_PORT,
-    MQTT_USER, MQTT_PASS);
-
-// HTTP utility (dùng netClient + mqtt bên trong gsm)
-HttpConfiguration http(gsm.netClient, &gsm.mqtt);
-
-// Time from modem
-TimeConfiguration timeConfig(gsm.modem);
-
-// QR scanner (GM65 hoặc MH-ET Live) trên Serial3
-QrScannerUtilityNonBlocking qrScanner(Serial3);
-
-// Network scheduler
-NetworkInterfaceScheduler netScheduler;
-
-SoftwareSerial BT(10, 11); // RX = 10, TX = 11
-const int IN1 = 8;
-const int IN2 = 9;
-
-// Battery sensor (nếu cần sau này)
-int sensorPin = A0; // OUT từ module đo áp
-float RATIO = 5.0;  // tỉ lệ chia áp
 
 // GPS / bike status
 int64_t currentUnixTime = 0;
@@ -108,7 +133,6 @@ float cur_lng = 0;
 float cur_lat = 0;
 int64_t last_gps_contact_time = 0;
 BikeState bikeState = IDLE;
-
 // trip id received from server
 String currentTripId;
 
@@ -129,42 +153,13 @@ void globalMqttCallback(char *topic, uint8_t *payload, unsigned int length)
     }
 }
 
+
+
+
+
 // =====================================================
 //  Helper functions
 // =====================================================
-
-float readBatteryVoltage()
-{
-    int raw = analogRead(sensorPin);
-    float voltage = (raw * 5.0f / 1023.0f); // 0–5V trên A0
-    return voltage * RATIO;                 // trả về áp thực tế của pack
-}
-
-int batteryPercentage(float v)
-{
-    if (v >= 8.4)
-        return 100;
-    if (v >= 8.2)
-        return 90;
-    if (v >= 8.0)
-        return 80;
-    if (v >= 7.8)
-        return 70;
-    if (v >= 7.6)
-        return 60;
-    if (v >= 7.4)
-        return 50;
-    if (v >= 7.2)
-        return 40;
-    if (v >= 7.0)
-        return 30;
-    if (v >= 6.8)
-        return 20;
-    if (v >= 6.6)
-        return 10;
-    return 0;
-}
-
 String generateUUID()
 {
     const char *alphabet =
@@ -206,21 +201,20 @@ bool isOutsideAllowedArea(float lat, float lng)
 
 void setup()
 {
-    pinMode(TFT_LED, OUTPUT);
-    digitalWrite(TFT_LED, HIGH); // turn on backlight
-    tft.begin();
-    tft.fillScreen(ILI9341_RED);
-    tft.setCursor(20, 20);
-    tft.setTextColor(ILI9341_WHITE);
-    tft.setTextSize(3);
-    tft.println("Hello Trung!");
+    Serial.begin(115200);
+    ina219.begin();
+    batteryManager.begin();
+    Wire.begin();               // Mega I2C pins
+    u8g2.begin();               // REQUIRED
+    toBeUpdated = true;         // force first draw
+    imu.begin();
+    
     /* BT.begin(9600); // HC-06 default baud rate
     pinMode(IN1, OUTPUT);
     pinMode(IN2, OUTPUT);
     // stop motors at start
     digitalWrite(IN1, LOW);
     digitalWrite(IN2, LOW);
-    Serial.begin(115200);
     delay(200);
 
     // LCD
@@ -258,6 +252,9 @@ void setup()
 
 void loop()
 {
+    imu.update();
+    batteryManager.update();
+
     /*  currentUnixTime = timeConfig.nowUnixMs();
      unsigned long now = millis();
      lcd.setCursor(0, 0);
@@ -506,4 +503,5 @@ void loop()
              new HttpMaintenanceTask(http),
              TASK_PRIORITY_LOW);
      }   */
+    displayTask.display();
 }

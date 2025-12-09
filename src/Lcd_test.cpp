@@ -1,31 +1,37 @@
-#include <Arduino.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_ST7789.h>
+#include <Wire.h>
+#include <U8g2lib.h>
+#include <qrcode.h>
+#include <UI/DisplayTask.h>
+#include <UI/App_logo.h>
 
-// Mega pins
-#define TFT_CS   10
-#define TFT_DC    8
-#define TFT_RST   9
+U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(
+    U8G2_R0,
+    U8X8_PIN_NONE  // reset pin not used
+);
 
-// Hardware SPI uses MOSI=51, SCK=52 on Mega
-Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+int batteryLevel = 75; // example battery level
+float currentSpeedKmh = 15.5; // example speed  
+bool toBeUpdated = true;
+DisplayPage currentPage = DisplayPage::LowBatteryAlert;
+DisplayTask displayTask(
+    currentSpeedKmh,
+    batteryLevel,
+    currentPage,
+    toBeUpdated,
+    app_logo_bitmap, // no default bitmap
+    "Something is wrong...." // example QR text
+);
 
-void setup() {
-    Serial.begin(115200);
-    delay(100);
-    Serial.println("ST7789 Test");
+void setup()
+{
+    
+     Wire.begin();               // Mega I2C pins
+    u8g2.begin();               // REQUIRED
+    toBeUpdated = true;         // force first draw
 
-    tft.init(240, 320);   // resolution for your TFT
-    Serial.println("Initialized");
-    tft.fillScreen(ST77XX_BLACK);
-
-    tft.setCursor(10, 10);
-    tft.setTextSize(2);
-    tft.setTextColor(ST77XX_GREEN);
-    Serial.println("ST7789 OK!");
-
-    tft.drawLine(0, 0, 239, 319, ST77XX_RED);
 }
 
-void loop() {
+void loop()
+{
+    displayTask.display();
 }
