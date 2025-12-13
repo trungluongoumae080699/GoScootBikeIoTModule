@@ -1,5 +1,4 @@
-#ifndef BIKE_H
-#define BIKE_H
+#pragma once
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -7,17 +6,21 @@
 struct Bike {
   String userName;
   String password;
-  float longitude;
-  float latitude;
-  int32_t battery;
+  String current_hub;
 };
 
-enum BikeState {
-    IDLE,
-    INUSED,
-    OUT_OF_BOUND
+enum UsageState {
+    IDLE = 0,
+    RESERVED = 1,
+    INUSED = 2
+};
+
+enum OperationState {
+    NORMAL = 0,
+    OUT_OF_BOUND = 1,
+    LOW_BATTERY = 2
 };
 
 
 
-#endif
+

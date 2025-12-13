@@ -19,9 +19,9 @@ private:
     const char *requestTopic;  // e.g. "/reservation/validation/BIK_298A1J35"
     const char *responseTopic; // e.g. "/reservation/BIK_298A1J35/validation/response"
     String &tripIdRef;
-    BikeState &bikeStateRef;
-    String &lcdLine1;
-    String &lcdLine2;
+    UsageState &bikeStateRef;
+    DisplayPage &currentDisplayedPage;
+
 
     bool awaitingResponse = false;
     bool responseReceived = false;
@@ -36,17 +36,18 @@ public:
                                    const char *requestTopicIn,
                                    const char *responseTopicIn,
                                    String &tripIdOut,
-                                   BikeState &bikeStateOut,
-                                   String &line1,
-                                   String &line2)
+                                   UsageState &bikeStateOut,
+                                   DisplayPage &currentDisplayedPage
+                            
+                                   )
         : gsm(gsmRef),
           trip(tripIn),
           requestTopic(requestTopicIn),
           responseTopic(responseTopicIn),
           tripIdRef(tripIdOut),
           bikeStateRef(bikeStateOut),
-          lcdLine1(line1),
-          lcdLine2(line2)
+          currentDisplayedPage(currentDisplayedPage)
+          
     {
     }
 
@@ -66,8 +67,7 @@ public:
             if (!requestTopic || !responseTopic)
             {
                 Serial.println(F("[TRIP] Missing MQTT topic(s)"));
-                lcdLine1 = "Validation failed";
-                lcdLine2 = "Bad config";
+                currentDisplayedPage = DisplayPage::GenericAlert;
                 markCompleted();
                 return;
             }
@@ -79,8 +79,7 @@ public:
             if (!gsm.mqtt.subscribe(responseTopic))
             {
                 Serial.println(F("[TRIP] MQTT subscribe failed"));
-                lcdLine1 = "Validation failed";
-                lcdLine2 = "Subscribe error";
+                currentDisplayedPage = DisplayPage::GenericAlert;
                 markCompleted();
                 g_activeValidationTask = nullptr;
                 return;
@@ -95,8 +94,7 @@ public:
             if (len <= 0)
             {
                 Serial.println(F("[TRIP] encodeTrip produced empty payload"));
-                lcdLine1 = "Validation failed";
-                lcdLine2 = "Encode error";
+                currentDisplayedPage = DisplayPage::GenericAlert;
                 markCompleted();
                 g_activeValidationTask = nullptr;
                 gsm.mqtt.unsubscribe(responseTopic);
@@ -108,8 +106,7 @@ public:
             if (!ok)
             {
                 Serial.println(F("[TRIP] MQTT publish FAILED"));
-                lcdLine1 = "Validation failed";
-                lcdLine2 = "MQTT error";
+                currentDisplayedPage = DisplayPage::GenericAlert;
                 markCompleted();
                 g_activeValidationTask = nullptr;
                 gsm.mqtt.unsubscribe(responseTopic);
@@ -119,8 +116,7 @@ public:
             Serial.print(F("[TRIP] MQTT publish OK, len="));
             Serial.println(len);
 
-            lcdLine1 = "Sending validation";
-            lcdLine2 = "Waiting response...";
+            
             awaitingResponse = true;
 
             // First tick ends here; we'll wait for response in next ticks
@@ -142,8 +138,7 @@ public:
         if (elapsed > overallTimeoutMs)
         {
             Serial.println(F("[TRIP] Validation timeout (no response)"));
-            lcdLine1 = "Validation timeout";
-            lcdLine2 = "Please try again";
+            currentDisplayedPage = DisplayPage::GenericAlert;
 
             // Cleanup
             gsm.mqtt.unsubscribe(responseTopic);
@@ -171,8 +166,7 @@ public:
         if (!ok)
         {
             Serial.println(F("[TRIP] Failed to decode TripValidationResponse"));
-            lcdLine1 = "Validation failed";
-            lcdLine2 = "Please try again...";
+            currentDisplayedPage = DisplayPage::GenericAlert;
             // vẫn coi như đã nhận response (nhưng fail)
             validationSuccess = false;
             responseReceived = true;
@@ -183,15 +177,14 @@ public:
         {
             Serial.println(F("[TRIP] Reservation is VALID"));
             validationSuccess = true;
-            lcdLine1 = "reservation validated!";
-            lcdLine2 = "Enjoy your ride!";
+
         }
         else
         {
             Serial.println(F("[TRIP] Reservation is NOT valid"));
             validationSuccess = false;
-            lcdLine1 = "Bike validation failed";
-            lcdLine2 = "Please try again";
+
+
         }
 
         // ==> CỰC KỲ QUAN TRỌNG
@@ -210,18 +203,16 @@ private:
         if (!validationSuccess)
         {
             Serial.println(F("[TRIP] Validation FAILED"));
-            lcdLine1 = "Bike validation";
-            lcdLine2 = "failed";
+            currentDisplayedPage = DisplayPage::GenericAlert;
             markCompleted();
             return;
         }
 
         // Success: cập nhật trip id & state
         tripIdRef = trip.id; // hoặc server gửi id nào đó thì dùng id đó
-        bikeStateRef = INUSED;
+        bikeStateRef = UsageState::INUSED;
 
-        lcdLine1 = "Trip Validated!";
-        lcdLine2 = "Enjoy your ride!";
+       currentDisplayedPage = DisplayPage::Welcome;
 
         markCompleted();
     }

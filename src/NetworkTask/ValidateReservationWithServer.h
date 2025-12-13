@@ -12,7 +12,7 @@ private:
     const char *url;      // endpoint, e.g. "http://your-backend/trip/validate"
     String requestBody;   // JSON gửi lên server (QR JSON)
     String &tripIdPtr;    // con trỏ tới biến tripId bên ngoài (update nếu isValid)
-    BikeState &bikeState; // trạng thái xe (IDLE / INUSED / ...)
+    UsageState &bikeState; // trạng thái xe (IDLE / INUSED / ...)
     String &lcdDisplayLine1;
     String &lcdDisplayLine2;
 
@@ -30,7 +30,7 @@ public:
                                const char *endpointUrl,
                                const String bodyJson,
                                String &tripIdOut,
-                               BikeState &bikeStatePtr,
+                               UsageState &bikeStatePtr,
                                String &line1,
                                String &line2)
         : http(httpCfg),

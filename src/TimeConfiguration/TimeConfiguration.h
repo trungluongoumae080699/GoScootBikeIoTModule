@@ -117,16 +117,6 @@ struct TimeConfiguration
             return -1;
 
         uint32_t elapsed = millis() - baseMillis; // wrap-safe
-
-        /*  Serial.print(F("[TIME] baseUnixMs = "));
-         Serial.println((long)baseUnixMs);
-
-         Serial.print(F("[TIME] elapsed = "));
-         Serial.println((unsigned long)elapsed);
-
-         Serial.print(F("[TIME] nowUnixMs = "));
-         Serial.println((long)(baseUnixMs + (int64_t)elapsed)); */
-
         return baseUnixMs + (int64_t)elapsed;
     }
 
