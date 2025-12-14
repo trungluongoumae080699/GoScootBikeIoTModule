@@ -66,7 +66,7 @@ struct GsmConfiguration
         }
 
         Serial.print(F("[GSM] Modem info: "));
-        Serial.println(modem.getModemInfo());
+        //Serial.println(modem.getModemInfo());
 
         Serial.print(F("[GSM] Waiting for network..."));
         if (!modem.waitForNetwork())

@@ -274,3 +274,71 @@ bool decodeTripValidationResponse(const uint8_t *buf,
     out.isValid = (flag != 0);
     return true;
 }
+
+
+struct TripTerminationPayload
+{
+    float end_lng;
+    float end_lat;
+};
+
+// ---- Trip encoder (Arduino) ----
+inline int encodeTripTerminationPayload(const TripTerminationPayload &t, uint8_t *buffer)
+{
+    int offset = 0;
+    // 6) current_lng (float32 LE)
+    writeFloat32LE(buffer, t.end_lng, offset);
+
+    // 7) current_lat (float32 LE)
+    writeFloat32LE(buffer, t.end_lat, offset);
+
+    return offset; // total bytes written
+}
+
+struct TripTerminationResponse
+{
+    bool isValid;
+};
+
+bool decodeTripTerminationResponse(const uint8_t *buf,
+                                  size_t len,
+                                  TripTerminationResponse &out)
+{
+    if (!buf || len < 1)
+    {
+        Serial.println(F("[TRIP] Response too short (need at least 1 byte)"));
+        return false;
+    }
+
+    uint8_t flag = buf[0];
+
+    if (flag != 0 && flag != 1)
+    {
+        Serial.print(F("[TRIP] Warning: unexpected isValid value = "));
+        Serial.println(flag);
+        // Still treat non-zero as "true"
+    }
+
+    out.isValid = (flag != 0);
+    return true;
+}
+
+int decodeTripStatusUpdate(const uint8_t *buf, size_t len)
+{
+    if (!buf || len < 1)
+    {
+        Serial.println(F("[TRIP] Payload too short"));
+        return -1;   // ERROR
+    }
+
+    uint8_t status = buf[0];
+
+    if (status > 2)
+    {
+        Serial.print(F("[TRIP] Invalid status = "));
+        Serial.println(status);
+        return -1;   // ERROR
+    }
+
+    return (int)status;
+}

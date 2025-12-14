@@ -27,7 +27,9 @@ void setup()
     Serial.begin(115200);
     Serial.println("Starting.....");
     Wire.begin();       // Mega I2C pins
+    Serial.println("Wiring done..");
     u8g2.begin();       // REQUIRED
+    Serial.println("u8g2 done...");
     toBeUpdated = true; // force first draw
     Serial.println("Setup done");
 

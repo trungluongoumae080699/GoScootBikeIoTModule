@@ -9,14 +9,14 @@
 #include "UI/DisplayTask.h"
 
 // Forward declaration so global callback can see it
-class ValidateTripWithServerTaskMqtt;
-extern ValidateTripWithServerTaskMqtt *g_activeValidationTask;
+class TerminateReservationWithServerMqtt;
+extern TerminateReservationWithServerMqtt *g_activeTripTerminationTask;
 
-class ValidateTripWithServerTaskMqtt : public NetworkTask
+class TerminateReservationWithServerMqtt : public NetworkTask
 {
 private:
     GsmConfiguration &gsm;
-    Trip trip;                 // trip info we send to server
+    TripTerminationPayload tripTerminationPayload;                 // trip info we send to server
     const char *requestTopic;  // e.g. "/reservation/validation/BIK_298A1J35"
     const char *responseTopic; // e.g. "/reservation/BIK_298A1J35/validation/response"
     String &tripIdRef;
@@ -27,15 +27,15 @@ private:
 
     bool awaitingResponse = false;
     bool responseReceived = false;
-    bool validationSuccess = false;
+    bool terminationSuccess = false;
     ;
     String serverIdOrMsg;
 
     uint32_t overallTimeoutMs = 15000; // 15s for full request+response
 
 public:
-    ValidateTripWithServerTaskMqtt(GsmConfiguration &gsmRef,
-                                   const Trip &tripIn,
+    TerminateReservationWithServerMqtt(GsmConfiguration &gsmRef,
+                                   const TripTerminationPayload &tripIn,
                                    const char *requestTopicIn,
                                    const char *responseTopicIn,
                                    String &tripIdOut,
@@ -46,7 +46,7 @@ public:
 
                                    )
         : gsm(gsmRef),
-          trip(tripIn),
+          tripTerminationPayload(tripIn),
           requestTopic(requestTopicIn),
           responseTopic(responseTopicIn),
           tripIdRef(tripIdOut),
@@ -80,7 +80,7 @@ public:
             }
 
             // Set ourself as the active validation task so the global callback can route messages
-            g_activeValidationTask = this;
+            g_activeTripTerminationTask = this;
 
             // Subscribe to response topic
             if (!gsm.mqtt.subscribe(responseTopic))
@@ -88,7 +88,7 @@ public:
                 Serial.println(F("[TRIP] MQTT subscribe failed"));
                 currentDisplayedPage = DisplayPage::GenericAlert;
                 markCompleted();
-                g_activeValidationTask = nullptr;
+                g_activeTripTerminationTask = nullptr;
                 return;
             }
 
@@ -97,13 +97,13 @@ public:
 
             // Encode Trip → binary
             uint8_t buffer[256];
-            int len = encodeTrip(trip, buffer);
+            int len = encodeTripTerminationPayload(tripTerminationPayload, buffer);
             if (len <= 0)
             {
                 Serial.println(F("[TRIP] encodeTrip produced empty payload"));
                 currentDisplayedPage = DisplayPage::GenericAlert;
                 markCompleted();
-                g_activeValidationTask = nullptr;
+                g_activeTripTerminationTask = nullptr;
                 gsm.mqtt.unsubscribe(responseTopic);
                 return;
             }
@@ -115,7 +115,7 @@ public:
                 Serial.println(F("[TRIP] MQTT publish FAILED"));
                 currentDisplayedPage = DisplayPage::GenericAlert;
                 markCompleted();
-                g_activeValidationTask = nullptr;
+                g_activeTripTerminationTask = nullptr;
                 gsm.mqtt.unsubscribe(responseTopic);
                 return;
             }
@@ -145,12 +145,11 @@ public:
         {
             Serial.println(F("[TRIP] Validation timeout (no response)"));
             currentDisplayedPage = DisplayPage::GenericAlert;
-            prevDisplayedPage = DisplayPage::QrScan;
 
             // Cleanup
             gsm.mqtt.unsubscribe(responseTopic);
-            if (g_activeValidationTask == this)
-                g_activeValidationTask = nullptr;
+            if (g_activeTripTerminationTask == this)
+                g_activeTripTerminationTask = nullptr;
 
             markCompleted();
         }
@@ -167,28 +166,26 @@ public:
 
         Serial.print(F("[TRIP] Validation response on topic: "));
         Serial.println(topic);
-
         int status = decodeTripStatusUpdate(payload, length);
         if (status < 0)
         {
             Serial.println(F("[TRIP] Failed to decode TripValidationResponse"));
             currentDisplayedPage = DisplayPage::GenericAlert;
-            prevDisplayedPage = DisplayPage::QrScan;
             // vẫn coi như đã nhận response (nhưng fail)
-            validationSuccess = false;
+            terminationSuccess = false;
             responseReceived = true;
             return;
         }
 
-        if (status == 1)
+        if (status == 2)
         {
-            Serial.println(F("[TRIP] Reservation is VALID"));
-            validationSuccess = true;
+            Serial.println(F("[TRIP] Termination is SUCCESSFUL"));
+            terminationSuccess = true;
         }
         else
         {
-            Serial.println(F("[TRIP] Reservation is NOT valid"));
-            validationSuccess = false;
+            Serial.println(F("[TRIP] Termination FAILED"));
+            terminationSuccess = false;
         }
 
         // ==> CỰC KỲ QUAN TRỌNG
@@ -201,14 +198,14 @@ private:
         Serial.println(F("[TRIP] finishFromResponse()"));
 
         gsm.mqtt.unsubscribe(responseTopic);
-        if (g_activeValidationTask == this)
-            g_activeValidationTask = nullptr;
+        if (g_activeTripTerminationTask == this)
+            g_activeTripTerminationTask = nullptr;
+        tripIdRef = "";
 
-        if (!validationSuccess)
+        if (!terminationSuccess)
         {
-            Serial.println(F("[TRIP] Validation FAILED"));
-            currentDisplayedPage = DisplayPage::GenericAlert;
-            prevDisplayedPage = DisplayPage::QrScan;
+            Serial.println(F("[TRIP] TERMINATION FAILED"));
+            currentDisplayedPage = DisplayPage::TripConclusionFailed;
             toUpdateDisplay = true;
             tripIdRef = "";
             markCompleted();
@@ -218,9 +215,7 @@ private:
         {
             Serial.println(F("[TRIP] Validation SUCCEEDED"));
             toUpdateDisplay = true;
-            tripIdRef = trip.id; // hoặc server gửi id nào đó thì dùng id đó
-            currentDisplayedPage = DisplayPage::Welcome;
-            prevDisplayedPage = DisplayPage::QrScan;
+            currentDisplayedPage = DisplayPage::TripConclusion;
             markCompleted();
         }
 

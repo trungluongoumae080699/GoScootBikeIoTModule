@@ -16,12 +16,16 @@ enum class DisplayPage
     PleaseWait,
     IncorrectQrScan,
     GenericAlert,
+    TripConclusion,
+    TripConclusionFailed,
 };
 
 inline bool isAlertPage(DisplayPage p)
 {
     return p == DisplayPage::GenericAlert ||
-           p == DisplayPage::IncorrectQrScan;
+           p == DisplayPage::IncorrectQrScan ||
+           p == DisplayPage::TripConclusion ||
+           p == DisplayPage::TripConclusionFailed;
 }
 
 // ---------- DisplayTask ----------
@@ -31,6 +35,7 @@ struct DisplayTask
     float &speedKmh;
     int &batteryPercent;
     DisplayPage &currentPage;
+    DisplayPage &prevPage;
     bool &toBeUpdated;
 
     // static assets
@@ -40,7 +45,7 @@ struct DisplayTask
     // alert + page timing
     unsigned long lastAlertStartMs = 0;
     unsigned long lastPageSwitchMs = 0;
-    const unsigned long alertDurationMs = 4000;     // 4 seconds
+    const unsigned long alertDurationMs = 10000;    // 4 seconds
     const unsigned long normalPageTimeoutMs = 5000; // 5 seconds
     DisplayPage lastNonAlertPage = DisplayPage::QrScan;
 
@@ -50,6 +55,7 @@ struct DisplayTask
     DisplayTask(float &speedRef,
                 int &batteryRef,
                 DisplayPage &pageRef,
+                DisplayPage &prevPageRef,
                 bool &updateFlagRef,
                 const unsigned char *bitmap,
                 const char *qrText)
@@ -58,7 +64,10 @@ struct DisplayTask
           currentPage(pageRef),
           toBeUpdated(updateFlagRef),
           defaultBitmap(bitmap),
-          qrContent(qrText) {}
+          qrContent(qrText),
+          prevPage(prevPageRef)
+    {
+    }
 
     void display()
     {
@@ -67,13 +76,15 @@ struct DisplayTask
         // ----- 4s timeout for alert pages -----
         if (isAlertPage(currentPage))
         {
+            Serial.println(F("[LCD] Check alert status"));
             if (lastAlertStartMs == 0)
             {
                 lastAlertStartMs = now;
             }
             else if (now - lastAlertStartMs >= alertDurationMs)
             {
-                currentPage = DisplayPage::Welcome;
+                Serial.println(F("[LCD] Alert timeout, returning to normal page"));
+                currentPage = prevPage;
                 toBeUpdated = true;
                 lastAlertStartMs = 0;
             }
@@ -84,6 +95,8 @@ struct DisplayTask
         {
             return;
         }
+
+        Serial.println(F("[LCD] Updating display"));
 
         // decide QR / bitmap + text by page
         bool useQr = false;
@@ -123,12 +136,24 @@ struct DisplayTask
 
         case DisplayPage::GenericAlert:
             text = F("Something is wrong...");
+            Serial.println(F("[LCD] Generic Alert Displayed"));
             useQr = false;
             qrText = nullptr;
             break;
 
         case DisplayPage::IncorrectQrScan:
             text = F("Incorrect QR");
+            useQr = false;
+            qrText = nullptr;
+            break;
+        case DisplayPage::TripConclusion:
+            text = F("Trip concluded. Thank you!");
+            useQr = false;
+            qrText = nullptr;
+            break;
+
+        case DisplayPage::TripConclusionFailed:
+            text = F("Trip termination failed!");
             useQr = false;
             qrText = nullptr;
             break;
@@ -168,9 +193,9 @@ private:
             QRCode qrcode;
             uint8_t qrcodeData[200];
 
-            qrcode_initText(&qrcode, qrcodeData, 1, ECC_MEDIUM, qrText);
+            qrcode_initText(&qrcode, qrcodeData, 2, ECC_LOW, qrText);
 
-            const uint8_t moduleSize = 3;
+            const uint8_t moduleSize = 2;
             const uint16_t qrPixelSize = qrcode.size * moduleSize;
 
             leftWidth = qrPixelSize;
@@ -205,7 +230,8 @@ private:
         const int textWidth = screenW - textX - 2;
 
         // 1) Draw wrapped text
-        int nextY = drawWrappedText(textX, 10, textWidth, textStr);
+        const int topMargin = 10; // luôn dính lên trên
+        int nextY = drawWrappedTextTop(textX, topMargin, textWidth, textStr);
 
         int textLastBaselineY = nextY - lineHeight;
 
@@ -270,28 +296,41 @@ private:
     }
 
     // ---------- Wrapped text ----------
-    int drawWrappedText(int x, int y, int maxWidth, const char *text)
+    int drawWrappedTextTop(int x, int topY, int maxWidth, const char *text)
     {
         if (!text || !*text)
-            return y;
+            return topY;
 
+        // Copy text vào buffer để strtok không phá string gốc
         char buffer[120];
         strncpy(buffer, text, sizeof(buffer));
         buffer[sizeof(buffer) - 1] = 0;
 
-        char *word;
-        String currentLine = "";
+        const int lineH = u8g2.getMaxCharHeight();
+        int y = topY;
 
-        word = strtok(buffer, " ");
+        String currentLine = "";
+        char *word = strtok(buffer, " ");
+
         while (word != NULL)
         {
             String testLine = currentLine + word + " ";
 
             if (u8g2.getStrWidth(testLine.c_str()) > maxWidth)
             {
-                u8g2.drawStr(x, y, currentLine.c_str());
-                y += u8g2.getMaxCharHeight();
-                currentLine = (String)word + " ";
+                // nếu currentLine rỗng mà word quá dài => vẫn vẽ word để khỏi kẹt
+                if (currentLine.length() == 0)
+                {
+                    u8g2.drawStr(x, y, word);
+                    y += lineH;
+                    currentLine = "";
+                }
+                else
+                {
+                    u8g2.drawStr(x, y, currentLine.c_str());
+                    y += lineH;
+                    currentLine = String(word) + " ";
+                }
             }
             else
             {
@@ -304,9 +343,49 @@ private:
         if (currentLine.length() > 0)
         {
             u8g2.drawStr(x, y, currentLine.c_str());
-            y += u8g2.getMaxCharHeight();
+            y += lineH;
         }
 
-        return y;
+        return y; // trả về y tiếp theo (dòng kế)
     }
+
+    /* int drawWrappedText(int x, int y, int maxWidth, const char *text)
+        {
+            if (!text || !*text)
+                return y;
+
+            char buffer[120];
+            strncpy(buffer, text, sizeof(buffer));
+            buffer[sizeof(buffer) - 1] = 0;
+
+            char *word;
+            String currentLine = "";
+
+            word = strtok(buffer, " ");
+            while (word != NULL)
+            {
+                String testLine = currentLine + word + " ";
+
+                if (u8g2.getStrWidth(testLine.c_str()) > maxWidth)
+                {
+                    u8g2.drawStr(x, y, currentLine.c_str());
+                    y += u8g2.getMaxCharHeight();
+                    currentLine = (String)word + " ";
+                }
+                else
+                {
+                    currentLine = testLine;
+                }
+
+                word = strtok(NULL, " ");
+            }
+
+            if (currentLine.length() > 0)
+            {
+                u8g2.drawStr(x, y, currentLine.c_str());
+                y += u8g2.getMaxCharHeight();
+            }
+
+            return y;
+        } */
 };
