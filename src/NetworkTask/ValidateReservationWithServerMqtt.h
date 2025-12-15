@@ -86,6 +86,7 @@ public:
             if (!gsm.mqtt.subscribe(responseTopic))
             {
                 Serial.println(F("[TRIP] MQTT subscribe failed"));
+                Serial.println(responseTopic);
                 currentDisplayedPage = DisplayPage::GenericAlert;
                 markCompleted();
                 g_activeValidationTask = nullptr;
@@ -219,11 +220,10 @@ private:
             Serial.println(F("[TRIP] Validation SUCCEEDED"));
             toUpdateDisplay = true;
             tripIdRef = trip.id; // hoặc server gửi id nào đó thì dùng id đó
-            currentDisplayedPage = DisplayPage::Welcome;
+            currentDisplayedPage = DisplayPage::HelmetPrompt;
             prevDisplayedPage = DisplayPage::QrScan;
             markCompleted();
         }
 
-        // Success: cập nhật trip id & state
     }
 };

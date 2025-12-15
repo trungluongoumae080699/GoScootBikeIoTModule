@@ -69,7 +69,7 @@ public:
         if (!isStarted())
         {
             markStarted();
-            Serial.println(F("[TRIP] ValidateTripWithServerTask: start (MQTT)"));
+            Serial.println(F("[TRIP] Terminating Trip With server start (MQTT)"));
 
             if (!requestTopic || !responseTopic)
             {
@@ -143,7 +143,7 @@ public:
         uint32_t elapsed = millis() - getStartMs();
         if (elapsed > overallTimeoutMs)
         {
-            Serial.println(F("[TRIP] Validation timeout (no response)"));
+            Serial.println(F("[TRIP] Termination timeout (no response)"));
             currentDisplayedPage = DisplayPage::GenericAlert;
 
             // Cleanup
@@ -164,12 +164,12 @@ public:
         if (strcmp(topic, responseTopic) != 0)
             return; // không phải topic của mình
 
-        Serial.print(F("[TRIP] Validation response on topic: "));
+        Serial.print(F("[TRIP] Termination response on topic: "));
         Serial.println(topic);
         int status = decodeTripStatusUpdate(payload, length);
         if (status < 0)
         {
-            Serial.println(F("[TRIP] Failed to decode TripValidationResponse"));
+            Serial.println(F("[TRIP] Failed to decode payload"));
             currentDisplayedPage = DisplayPage::GenericAlert;
             // vẫn coi như đã nhận response (nhưng fail)
             terminationSuccess = false;
@@ -213,7 +213,7 @@ private:
         }
         else
         {
-            Serial.println(F("[TRIP] Validation SUCCEEDED"));
+            Serial.println(F("[TRIP] TERMINATION SUCCEEDED"));
             toUpdateDisplay = true;
             currentDisplayedPage = DisplayPage::TripConclusion;
             markCompleted();

@@ -18,6 +18,7 @@ enum class DisplayPage
     GenericAlert,
     TripConclusion,
     TripConclusionFailed,
+    HelmetPrompt
 };
 
 inline bool isAlertPage(DisplayPage p)
@@ -76,7 +77,6 @@ struct DisplayTask
         // ----- 4s timeout for alert pages -----
         if (isAlertPage(currentPage))
         {
-            Serial.println(F("[LCD] Check alert status"));
             if (lastAlertStartMs == 0)
             {
                 lastAlertStartMs = now;
@@ -154,6 +154,11 @@ struct DisplayTask
 
         case DisplayPage::TripConclusionFailed:
             text = F("Trip termination failed!");
+            useQr = false;
+            qrText = nullptr;
+            break;
+        case DisplayPage::HelmetPrompt:
+            text = F("Please remove helmet!");
             useQr = false;
             qrText = nullptr;
             break;

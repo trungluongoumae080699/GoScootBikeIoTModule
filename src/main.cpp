@@ -43,6 +43,7 @@
 #define BACK_LEFT A6
 #define STRAIGHT_RIGHT A5
 #define BACK_RIGHT A4
+#define HELMET_PIN 13
 
 int qr_tx = A14;
 int qr_rx = A15;
@@ -53,7 +54,6 @@ U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(
 );
 
 SoftwareSerial qrSerial(A14, A15);
-SoftwareSerial helmetSerial(12, 13); // RX, TX
 
 Adafruit_INA219 ina219;
 
@@ -72,7 +72,7 @@ const char GPRS_PASS[] = "";
 
 // ----------------- MQTT config -----------------
 const char *MQTT_HOST = "0.tcp.ap.ngrok.io";
-const uint16_t MQTT_PORT = 17610;
+const uint16_t MQTT_PORT = 15311;
 const char *MQTT_USER = "BIK_298A1J35";
 const char *MQTT_PASS = "TrungLuong080699!!!";
 const char *MQTT_TOPIC = "/telemetry/BIK_298A1J35";
@@ -226,9 +226,32 @@ void printResetCause()
         Serial.println("[RESET] Power-on reset");
 }
 
+static bool lastStableConnected = true;
+static uint8_t lastRead = LOW;
+static unsigned long lastChangeMs = 0;
+
+bool readHelmetConnectedDebounced()
+{
+    uint8_t r = digitalRead(HELMET_PIN);
+    if (r != lastRead)
+    {
+        lastRead = r;
+        lastChangeMs = millis();
+    }
+
+    if (millis() - lastChangeMs > 50)
+    { // 50ms debounce
+        return (lastRead == LOW);
+    }
+
+    // chưa ổn định -> trả trạng thái cũ
+    return lastStableConnected;
+}
+
 void setup()
 {
     Serial.begin(115200);
+    pinMode(HELMET_PIN, INPUT_PULLUP);
     delay(50);
 
     bootCount++;
@@ -285,90 +308,86 @@ void loop()
 {
 
     // imu.update();
-    batteryManager.update();
-    if (batteryLevel <= 49)
-    {
-        currentPage = DisplayPage::LowBatteryAlert;
-        Serial.println(F("[ALERT] Low battery zone, enqueue alert"));
-        Alert alert;
-        alert.id = generateUUID();
-        alert.bike_id = bikeUserName;
-        alert.content = "Bike outside geofence";
-        alert.type = AlertType::LOW_BATTERY;
-        alert.longitude = cur_lng;
-        alert.latitude = cur_lat;
-        alert.time = currentUnixTime;
-        operationState = OUT_OF_BOUND;
-        uint8_t alertBuf[256];
-        int alertLen = encodeAlert(alert, alertBuf);
-        NetworkTask *alertTask = new PublishMqttTask(
-            gsm,
-            alertBuf,
-            alertLen,
-            ALERT_TOPIC);
-        netScheduler.enqueue(alertTask, TASK_PRIORITY_CRITICAL);
-    }
-
-    if (helmetSerial.available())
-    {
-        if (usageState == UsageState::INUSED)
+    /*     batteryManager.update();
+        if (batteryLevel <= 49)
         {
-            helmetIsConnected = true;
-            currentPage = DisplayPage::TripConclusion;
-            prevPage = DisplayPage::QrScan;
-            static char requestTopic[96];
-
-            snprintf(
-                requestTopic,
-                sizeof(requestTopic),
-                "/reservation/%s/%s/terminate",
-                bikeUserName,
-                currentTripId);
-
-            const char *request = requestTopic;
-
-            static char responseTopic[64];
-            snprintf(
-                responseTopic,
-                sizeof(responseTopic),
-                "/reservation/%s/update",
-                currentTripId);
-
-            const char *response = responseTopic;
-
-            TripTerminationPayload tripTerminationPayload = {
-                .end_lng = cur_lng,
-                .end_lat = cur_lat};
-
-            NetworkTask *task = new TerminateReservationWithServerMqtt(
+            currentPage = DisplayPage::LowBatteryAlert;
+            Serial.println(F("[ALERT] Low battery zone, enqueue alert"));
+            Alert alert;
+            alert.id = generateUUID();
+            alert.bike_id = bikeUserName;
+            alert.content = "Bike outside geofence";
+            alert.type = AlertType::LOW_BATTERY;
+            alert.longitude = cur_lng;
+            alert.latitude = cur_lat;
+            alert.time = currentUnixTime;
+            operationState = OUT_OF_BOUND;
+            uint8_t alertBuf[256];
+            int alertLen = encodeAlert(alert, alertBuf);
+            NetworkTask *alertTask = new PublishMqttTask(
                 gsm,
-                tripTerminationPayload,
-                request,
-                response,
-                currentTripId,
-                usageState,
-                currentPage,
-                prevPage,
-                toBeUpdated
-            );
-
-            netScheduler.enqueue(task, TASK_PRIORITY_CRITICAL);
-            usageState = UsageState::IDLE;
-        }
-    }
-    else
-    {
-        if (currentTripId != "")
-        {
-            usageState = UsageState::INUSED;
-        }
-    }
+                alertBuf,
+                alertLen,
+                ALERT_TOPIC);
+            netScheduler.enqueue(alertTask, TASK_PRIORITY_CRITICAL);
+        } */
 
     digitalWrite(STRAIGHT_LEFT, LOW);
     digitalWrite(STRAIGHT_RIGHT, LOW);
     digitalWrite(BACK_LEFT, LOW);
     digitalWrite(BACK_RIGHT, LOW);
     Dabble.processInput();
+    if (GamePad.isUpPressed())
+    {
+        if (usageState == UsageState::INUSED)
+        {
+            digitalWrite(STRAIGHT_LEFT, HIGH);
+            digitalWrite(STRAIGHT_RIGHT, HIGH);
+            digitalWrite(BACK_LEFT, LOW);
+            digitalWrite(BACK_RIGHT, LOW);
+        }
+    }
+
+    if (GamePad.isDownPressed())
+    {
+        if (usageState == UsageState::INUSED)
+        {
+            digitalWrite(STRAIGHT_LEFT, LOW);
+            digitalWrite(STRAIGHT_RIGHT, LOW);
+            digitalWrite(BACK_LEFT, HIGH);
+            digitalWrite(BACK_RIGHT, HIGH);
+        }
+    }
+    if (GamePad.isLeftPressed())
+    {
+        Serial.println("LEFT");
+    }
+
+    if (GamePad.isRightPressed())
+    {
+        Serial.println("RIGHT");
+    }
+
+    if (GamePad.isSquarePressed())
+    {
+        Serial.println("SQUARE");
+    }
+
+    if (GamePad.isCirclePressed())
+    {
+        Serial.println("CIRCLE");
+    }
+
+    if (GamePad.isTrianglePressed())
+    {
+        Serial.println("TRIANGLE");
+    }
+
+    if (GamePad.isCrossPressed())
+    {
+        Serial.println("CROSS");
+    }
+
     // Read from HM-10 → Serial Monitor
 
     currentUnixTime = timeConfig.nowUnixMs();
@@ -378,10 +397,15 @@ void loop()
     {
         g_activeValidationTask = nullptr;
     }
+    if (g_activeTripTerminationTask->isCompleted())
+    {
+        g_activeTripTerminationTask = nullptr;
+    }
 
     // -------------------------------------------------
     // 1) QR SCANNER – ONLY when bike is IDLE
     // -------------------------------------------------
+    qrSerial.listen();
     qrScanner.step();
 
     if (qrScanner.isScanReady())
@@ -413,10 +437,11 @@ void loop()
                 snprintf(
                     responseTopic,
                     sizeof(responseTopic),
-                    "/reservation/%s/validate",
-                    trip.id);
+                    "/reservation/%s/update",
+                    trip.id.c_str());
 
                 const char *response = responseTopic;
+                Serial.println(response);
                 NetworkTask *task = new ValidateTripWithServerTaskMqtt(
                     gsm,
                     trip,
@@ -437,6 +462,75 @@ void loop()
         }
     }
 
+    bool helmetConnected = readHelmetConnectedDebounced();
+
+    // detect rising edge: false -> true
+    if (helmetConnected)
+    {
+        // helmet vừa mới được "cắm vào"
+        if (usageState == UsageState::INUSED)
+        {
+            if (currentTripId.length() > 0)
+            {
+                helmetIsConnected = true;
+                currentPage = DisplayPage::TripConclusion;
+                prevPage = DisplayPage::QrScan;
+                static char requestTopic[96];
+
+                snprintf(
+                    requestTopic,
+                    sizeof(requestTopic),
+                    "/reservation/%s/%s/termination",
+                    bikeUserName.c_str(),
+                    currentTripId.c_str());
+
+                const char *request = requestTopic;
+                Serial.println(request);
+
+                static char responseTopic[64];
+                snprintf(
+                    responseTopic,
+                    sizeof(responseTopic),
+                    "/reservation/%s/update",
+                    currentTripId.c_str());
+
+                const char *response = responseTopic;
+                Serial.println(response);
+
+                TripTerminationPayload tripTerminationPayload = {
+                    .end_lng = cur_lng,
+                    .end_lat = cur_lat};
+
+                NetworkTask *task = new TerminateReservationWithServerMqtt(
+                    gsm,
+                    tripTerminationPayload,
+                    request,
+                    response,
+                    currentTripId,
+                    usageState,
+                    currentPage,
+                    prevPage,
+                    toBeUpdated);
+
+                netScheduler.enqueue(task, TASK_PRIORITY_CRITICAL);
+                usageState = UsageState::IDLE;
+            }
+        }
+    }
+    else
+    {
+        if (currentTripId.length() > 0 && usageState != UsageState::INUSED)
+        {
+            toBeUpdated = true;
+            usageState = UsageState::INUSED;
+            Serial.println(F("[HELMET] Helmet removed, bike IN_USED"));
+            currentPage = DisplayPage::Welcome;
+            prevPage = DisplayPage::QrScan;
+        }
+    }
+
+    lastStableConnected = helmetConnected;
+
     // -------------------------------------------------
     // 2) GPS – cập nhật vị trí, không đụng LCD
     // -------------------------------------------------
@@ -446,83 +540,83 @@ void loop()
     static float lastLat = 0, lastLng = 0;
     static unsigned long last_geolocation = 0;
 
-    /*     if (now - lastGpsPrint >= 1000)
-        {
-            lastGpsPrint = now;
-            gpsConfiguration.printDebug();
-            float lat, lng;
-            if (gpsConfiguration.getLocation(lat, lng))
-            {
-                isInside = false;
-                last_gps_lat = lat;
-                last_gps_long = lng;
-                cur_lat = lat;
-                cur_lng = lng;
-                lastLat = lat;
-                lastLng = lng;
-                last_gps_contact_time = currentUnixTime;
+    /*    if (now - lastGpsPrint >= 1000)
+           {
+               lastGpsPrint = now;
+               gpsConfiguration.printDebug();
+               float lat, lng;
+               if (gpsConfiguration.getLocation(lat, lng))
+               {
+                   isInside = false;
+                   last_gps_lat = lat;
+                   last_gps_long = lng;
+                   cur_lat = lat;
+                   cur_lng = lng;
+                   lastLat = lat;
+                   lastLng = lng;
+                   last_gps_contact_time = currentUnixTime;
 
-                // Check if location is inside allowed area
-                if (isOutsideAllowedArea(lat, lng))
-                {
-                    currentPage = DisplayPage::BoundaryCrossAlert;
-                    Serial.println(F("[ALERT] Outside allowed boundary, enqueue alert"));
+                   // Check if location is inside allowed area
+                   if (isOutsideAllowedArea(lat, lng))
+                   {
+                       currentPage = DisplayPage::BoundaryCrossAlert;
+                       Serial.println(F("[ALERT] Outside allowed boundary, enqueue alert"));
 
-                    Alert alert;
-                    alert.id = generateUUID();
-                    alert.bike_id = bikeUserName;
-                    alert.content = "Bike outside geofence";
-                    alert.type = AlertType::BOUNDARY_CROSS;
-                    alert.longitude = lng;
-                    alert.latitude = lat;
-                    alert.time = currentUnixTime;
-                    operationState = OUT_OF_BOUND;
+                       Alert alert;
+                       alert.id = generateUUID();
+                       alert.bike_id = bikeUserName;
+                       alert.content = "Bike outside geofence";
+                       alert.type = AlertType::BOUNDARY_CROSS;
+                       alert.longitude = lng;
+                       alert.latitude = lat;
+                       alert.time = currentUnixTime;
+                       operationState = OUT_OF_BOUND;
 
-                    uint8_t alertBuf[256];
-                    int alertLen = encodeAlert(alert, alertBuf);
+                       uint8_t alertBuf[256];
+                       int alertLen = encodeAlert(alert, alertBuf);
 
-                    NetworkTask *alertTask = new PublishMqttTask(
-                        gsm,
-                        alertBuf,
-                        alertLen,
-                        ALERT_TOPIC);
-                    netScheduler.enqueue(alertTask, TASK_PRIORITY_CRITICAL);
-                }
-            }
-            else
-            {
-                Serial.println(F("[GPS] No fix yet"));
-                isInside = true;
-            }
+                       NetworkTask *alertTask = new PublishMqttTask(
+                           gsm,
+                           alertBuf,
+                           alertLen,
+                           ALERT_TOPIC);
+                       netScheduler.enqueue(alertTask, TASK_PRIORITY_CRITICAL);
+                   }
+               }
+               else
+               {
+                   Serial.println(F("[GPS] No fix yet"));
+                   isInside = true;
+               }
 
-            // -------------------------------------------------
-            // 3) Indoor logic – enqueue cell / geolocation tasks
-            // -------------------------------------------------
-            if (isInside && now - last_geolocation >= 10000)
-            {
+               // -------------------------------------------------
+               // 3) Indoor logic – enqueue cell / geolocation tasks
+               // -------------------------------------------------
+               if (isInside && now - last_geolocation >= 10000)
+               {
 
-                if (cellInfo.isOutdated)
-                {
+                   if (cellInfo.isOutdated)
+                   {
 
-                    NetworkTask *cellTask = new CellTowerQueryTask(
-                        gsm,
-                        cellInfo);
-                    netScheduler.enqueue(cellTask, TASK_PRIORITY_LOW);
-                }
-                else
-                {
-                    // we have a CellInfo → call UnwiredLabs for approximate location
-                    Serial.println(F("[INDOOR] Have CellInfo, enqueue QueryGeolocationApiTask"));
+                       NetworkTask *cellTask = new CellTowerQueryTask(
+                           gsm,
+                           cellInfo);
+                       netScheduler.enqueue(cellTask, TASK_PRIORITY_LOW);
+                   }
+                   else
+                   {
+                       // we have a CellInfo → call UnwiredLabs for approximate location
+                       Serial.println(F("[INDOOR] Have CellInfo, enqueue QueryGeolocationApiTask"));
 
-                    NetworkTask *geoTask = new QueryGeolocationApiTask(
-                        http,
-                        cellInfo,
-                        cur_lat,
-                        cur_lng);
-                    netScheduler.enqueue(geoTask, TASK_PRIORITY_LOW);
-                }
-            }
-        } */
+                       NetworkTask *geoTask = new QueryGeolocationApiTask(
+                           http,
+                           cellInfo,
+                           cur_lat,
+                           cur_lng);
+                       netScheduler.enqueue(geoTask, TASK_PRIORITY_LOW);
+                   }
+               }
+           }  */
 
     // -------------------------------------------------
     // 6) PUBLISH TELEMETRY MỖI 5 GIÂY – via scheduler
@@ -580,25 +674,5 @@ void loop()
             TASK_PRIORITY_LOW);
     }
 
-    if (GamePad.isUpPressed())
-    {
-        if (usageState == UsageState::INUSED)
-        {
-            digitalWrite(STRAIGHT_LEFT, HIGH);
-            digitalWrite(STRAIGHT_RIGHT, HIGH);
-            digitalWrite(BACK_LEFT, LOW);
-            digitalWrite(BACK_RIGHT, LOW);
-        }
-    }
-    if (GamePad.isDownPressed())
-    {
-        if (usageState == UsageState::INUSED)
-        {
-            digitalWrite(STRAIGHT_LEFT, LOW);
-            digitalWrite(STRAIGHT_RIGHT, LOW);
-            digitalWrite(BACK_LEFT, HIGH);
-            digitalWrite(BACK_RIGHT, HIGH);
-        }
-    }
     displayTask.display();
 }
