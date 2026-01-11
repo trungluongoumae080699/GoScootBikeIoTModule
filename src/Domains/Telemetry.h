@@ -14,7 +14,10 @@ struct Telemetry
   int32_t battery;
   int64_t time;
   int64_t last_gps_contact_time;
-  OperationState operationState;
+  bool batteryIsLow;
+  bool isToppled;
+  bool isCrashed;
+  bool isOutOfBound;
   UsageState usageState;
 };
 
@@ -51,18 +54,21 @@ inline void writeFloat32LE(uint8_t *buf, float value, int &offset)
   buf[offset++] = (uint8_t)((raw >> 24) & 0xFF);
 }
 
+inline uint8_t boolToUint8(bool v) { return v ? 1 : 0; }
+
+// Return number of bytes written
 inline int encodeTelemetry(const Telemetry &t, uint8_t *buffer)
 {
   int offset = 0;
 
   // 1) ID length (1 byte) + ID bytes
-  uint8_t idLen = (uint8_t)min((size_t)255, t.id.length());
+  uint8_t idLen = (uint8_t)min((size_t)255, (size_t)t.id.length());
   buffer[offset++] = idLen;
   memcpy(buffer + offset, t.id.c_str(), idLen);
   offset += idLen;
 
   // 2) BikeId length (1 byte) + BikeId bytes
-  uint8_t bikeLen = (uint8_t)min((size_t)255, t.bikeId.length());
+  uint8_t bikeLen = (uint8_t)min((size_t)255, (size_t)t.bikeId.length());
   buffer[offset++] = bikeLen;
   memcpy(buffer + offset, t.bikeId.c_str(), bikeLen);
   offset += bikeLen;
@@ -88,10 +94,19 @@ inline int encodeTelemetry(const Telemetry &t, uint8_t *buffer)
   // 9) Last GPS contact time (int64, LE)
   writeInt64LE(buffer, t.last_gps_contact_time, offset);
 
-  // 10) operation state  (1 byte)
-  buffer[offset++] = static_cast<uint8_t>(t.operationState);
+  // 10) BatteryIsLow (1 byte)
+  buffer[offset++] = boolToUint8(t.batteryIsLow);
 
-  // 10) usage state (1 byte)
+  // 11) IsToppled (1 byte)
+  buffer[offset++] = boolToUint8(t.isToppled);
+
+  // 12) IsCrashed (1 byte)
+  buffer[offset++] = boolToUint8(t.isCrashed);
+
+  // 13) IsOutOfBound (1 byte)
+  buffer[offset++] = boolToUint8(t.isOutOfBound);
+
+  // 14) UsageStatus (1 byte)
   buffer[offset++] = static_cast<uint8_t>(t.usageState);
 
   return offset;

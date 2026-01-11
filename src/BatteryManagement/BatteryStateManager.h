@@ -103,12 +103,12 @@ private:
     float estimateSOC_FromVoltage(float vPack) {
         const int N = 11;
         const float voltTable[N] = {
-            6.40f, 6.70f, 6.90f, 7.10f, 7.30f,
-            7.50f, 7.70f, 7.90f, 8.10f, 8.30f, 8.40f
+            6.40f, 6.70f, 6.90f, 7.10f, 7.20f,
+            7.3, 7.4, 7.5, 7.6, 7.8f, 7.9f
         };
         const float socTable[N] = {
-             0.0f, 10.0f, 20.0f, 30.0f, 40.0f,
-            50.0f, 60.0f, 70.0f, 80.0f, 95.0f, 100.0f
+             0.0f, 10.0f, 20.0f, 45.0f, 50.0f,
+            55.0f, 60.0f, 70.0f, 80.0f, 95.0f, 100.0f
         };
 
         if (vPack <= voltTable[0]) return 0.0f;

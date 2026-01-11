@@ -6,15 +6,18 @@
 // -----------------------------------------
 enum class AlertType : uint8_t
 {
-    CRASH = 0,
-    LOW_BATTERY = 1,
-    BOUNDARY_CROSS = 2
+    TOPPLE = 0,
+    CRASH = 1,
+    LOW_BATTERY = 2,
+    BOUNDARY_CROSS = 3
 };
 
 inline const char *alertTypeToString(AlertType t)
 {
     switch (t)
     {
+    case AlertType::TOPPLE:
+        return "topple";
     case AlertType::CRASH:
         return "crash";
     case AlertType::LOW_BATTERY:

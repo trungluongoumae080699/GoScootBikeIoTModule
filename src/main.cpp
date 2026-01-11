@@ -1,4 +1,4 @@
-#define TINY_GSM_MODEM_SIM7600 // MUST be first
+#define TINY_GSM_MODEM_SIM7600
 
 #include <Arduino.h>
 #include <TinyGsmClient.h>
@@ -62,11 +62,11 @@ GpsConfiguration gpsConfiguration(&Serial1);
 
 const String bikeUserName = "BIK_298A1J35";
 const String bikePassworkd = "TrungLuong080699!!!";
-String currentHub = "HUB-5XRGFY6Z";
+String currentHub = "HUB-CXBN4HMN";
 String qrContent = bikeUserName + "," + currentHub;
 
 // ----------------- GSM / Network config -----------------
-const char APN[] = "v-internet";
+const char APN[] = "internet";
 const char GPRS_USER[] = "";
 const char GPRS_PASS[] = "";
 
@@ -77,6 +77,14 @@ const char *MQTT_USER = "BIK_298A1J35";
 const char *MQTT_PASS = "TrungLuong080699!!!";
 const char *MQTT_TOPIC = "/telemetry/BIK_298A1J35";
 const char *ALERT_TOPIC = "alerts/BIK_298A1J35"; // alerts topic
+
+const char *ALERT_TOPIC_TOPPLE = "alerts/topple/BIK_298A1J35";
+const char *ALERT_TOPIC_GEOFENCE = "alerts/geofence/BIK_298A1J35";
+const char *ALERT_TOPIC_BATTERY = "alerts/battery/BIK_298A1J35";
+
+Alert *toppleAlert = nullptr;
+Alert *lowBatteryAlert = nullptr;
+Alert *geofenceAlert = nullptr;
 
 // GSM configuration (Serial2 = modem)
 GsmConfiguration gsm(
@@ -114,12 +122,30 @@ DisplayTask displayTask(
 
 BatteryStateManager batteryManager(ina219, batteryLevel);
 
-int16_t accelX, accelY, accelZ;
-int16_t gyroRollRate, gyroPitchRate, gyroYawRate;
+int16_t accelX = 0;
+int16_t accelY = 0;
+int16_t accelZ = 0;
 
+int16_t gyroRollRate = 0;
+int16_t gyroPitchRate = 0;
+int16_t gyroYawRate = 0;
+
+// -------------------------------
+// State tracking (NEW)
+// -------------------------------
+VehicleState currentState = VehicleState::UPRIGHT;
+unsigned long znStableSinceMs = 0;
+float znRounded1dp = 0.0f;
+
+// -------------------------------
+// IMU configuration instance
+// -------------------------------
 ImuConfiguration imu(
     accelX, accelY, accelZ,
-    gyroRollRate, gyroPitchRate, gyroYawRate);
+    gyroRollRate, gyroPitchRate, gyroYawRate,
+    currentState,
+    znStableSinceMs,
+    znRounded1dp);
 
 // =====================================================
 //  GLOBAL CONFIG
@@ -132,10 +158,11 @@ CellInfo cellInfo;
 // GPS / bike status
 int64_t currentUnixTime = 0;
 bool isInside = false;
-float last_gps_long = 0;
-float last_gps_lat = 0;
-float cur_lng = 0;
-float cur_lat = 0;
+
+float last_gps_long = 106.754624;
+float last_gps_lat = 10.8514327;
+float cur_lng = 106.754624;
+float cur_lat = 10.8514327;
 int64_t last_gps_contact_time = 0;
 OperationState operationState = OperationState::NORMAL;
 UsageState usageState = UsageState::IDLE;
@@ -248,9 +275,52 @@ bool readHelmetConnectedDebounced()
     return lastStableConnected;
 }
 
+bool batteryIsLow = false;
+bool isToppled = false;
+bool isCrashed = false;
+bool isOutOfBound = false;
+
+void testHttp()
+{
+    Serial.println("[HTTP] Starting HTTP test...");
+
+    const char *host = "example.com";
+    const int port = 80;
+    const char *path = "/";
+
+    if (!gsm.netClient.connect(host, port))
+    {
+        Serial.println("[HTTP] TCP connect FAILED");
+        return;
+    }
+
+    Serial.println("[HTTP] TCP connected");
+
+    // Send HTTP GET
+    gsm.netClient.print(String("GET ") + path + " HTTP/1.1\r\n");
+    gsm.netClient.print(String("Host: ") + host + "\r\n");
+    gsm.netClient.print("Connection: close\r\n\r\n");
+
+    // Read response
+    unsigned long timeout = millis();
+    while (gsm.netClient.connected() && millis() - timeout < 8000)
+    {
+        while (gsm.netClient.available())
+        {
+            char c = gsm.netClient.read();
+            Serial.write(c);
+            timeout = millis();
+        }
+    }
+
+    gsm.netClient.stop();
+    Serial.println("\n[HTTP] Done");
+}
+
 void setup()
 {
     Serial.begin(115200);
+
     pinMode(HELMET_PIN, INPUT_PULLUP);
     delay(50);
 
@@ -264,9 +334,8 @@ void setup()
     ina219.begin();
     batteryManager.begin();
     toBeUpdated = true; // force first draw
-    // imu.begin();
     Serial3.begin(9600);
-
+    imu.begin();
     pinMode(STRAIGHT_LEFT, OUTPUT);
     pinMode(BACK_LEFT, OUTPUT);
     pinMode(STRAIGHT_RIGHT, OUTPUT);
@@ -286,17 +355,43 @@ void setup()
 
     // GPS
     gpsConfiguration.begin(); // NEO-M10: 38400 bên trong GpsConfiguration */
+
     Serial.println("Setup Done");
 
     // GSM / Modem
     if (!gsm.setupModemBlocking())
     {
         Serial.println(F("[GSM] setup failed, will keep trying in loop"));
-    }
-
+    };
+    testHttp();
+    Serial.println("Retrieving Time");
     // Sync time from modem
     timeConfig.syncOnceBlocking();
-    gsm.mqtt.connected();
+
+    Serial.println("[NET] TCP probe...");
+    if (!gsm.netClient.connect(MQTT_HOST, MQTT_PORT))
+    {
+        Serial.println("[NET] TCP probe FAILED");
+    }
+    else
+    {
+        Serial.println("[NET] TCP probe OK");
+        gsm.netClient.stop();
+    }
+    String clientId = String("goscoot-bike-") + String(random(0xffff), HEX);
+    Serial.print("[MQTT] Connecting as ");
+    Serial.println(clientId);
+
+    bool ok = gsm.mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASS);
+    if (!ok)
+    {
+        Serial.print("[MQTT] connect failed, rc=");
+        Serial.println(gsm.mqtt.state()); // -1/-2/-4...
+    }
+    else
+    {
+        Serial.println("[MQTT] connected");
+    }
     gsm.mqtt.setCallback(globalMqttCallback);
 }
 
@@ -306,13 +401,77 @@ void setup()
 
 void loop()
 {
+    currentUnixTime = timeConfig.nowUnixMs();
+    unsigned long now = millis();
+    /*
+    static unsigned long lastToppleAlert = 0;
 
-    // imu.update();
-    /*     batteryManager.update();
+    
+    if (now - lastToppleAlert > 1000UL)
+    {
+        lastToppleAlert = now;
+        // Update IMU (imu.update() sẽ tự update currentState theo logic bạn đã viết)
+        if (imu.update())
+        {
+            // 1) Chỉ gửi alert khi KHÔNG UPRIGHT
+            if (currentState != VehicleState::UPRIGHT)
+            {
+                if (toppleAlert == nullptr)
+                {
+                    Serial.println(F("[IMU] Vehicle not upright, sending TOPPLE alert"));
+                    // 2) Tạo alert
+                    Alert alert;
+                    alert.id = generateUUID();
+                    alert.bike_id = bikeUserName;              // hoặc bikeId tùy struct bạn
+                    alert.content = "Xe BIK_298A1J35 có dấu hiệu bị lật. Xin vui lòng kiểm tra"; // bạn đổi message tùy ý
+                    alert.type = AlertType::TOPPLE;            // nếu bạn có enum này
+                    alert.longitude = cur_lng;                 // từ input của bạn
+                    alert.latitude = cur_lat;                  // từ input của bạn
+                    alert.time = currentUnixTime;              // unix time bạn đang dùng
+
+                    // (khuyến nghị) include state để backend hiểu nguyên nhân
+                    // alert.state = (int)currentState;            // nếu struct Alert có field
+
+                    // 3) Encode
+                    uint8_t alertBuf[256];
+                    int alertLen = encodeAlert(alert, alertBuf);
+                    isToppled = true;
+
+                    toppleAlert = &alert;
+
+                    // 4) Publish MQTT qua scheduler
+                    NetworkTask *alertTask = new PublishMqttTask(
+                        gsm,
+                        alertBuf,
+                        alertLen,
+                        ALERT_TOPIC_TOPPLE);
+
+                    netScheduler.enqueue(alertTask, TASK_PRIORITY_CRITICAL);
+                }
+            }
+            else
+            {
+                toppleAlert = nullptr;
+                isToppled = false;
+                Serial.println(F("[IMU] Vehicle is upright"));
+            }
+        }
+        else
+        {
+            Serial.println(F("[IMU] Not initialized / update failed"));
+        }
+    }
+        */
+        
+
+    
+
+
+    batteryManager.update();
         if (batteryLevel <= 49)
         {
             currentPage = DisplayPage::LowBatteryAlert;
-            Serial.println(F("[ALERT] Low battery zone, enqueue alert"));
+            //Serial.println(F("[ALERT] Low battery zone, enqueue alert"));
             Alert alert;
             alert.id = generateUUID();
             alert.bike_id = bikeUserName;
@@ -321,7 +480,8 @@ void loop()
             alert.longitude = cur_lng;
             alert.latitude = cur_lat;
             alert.time = currentUnixTime;
-            operationState = OUT_OF_BOUND;
+
+            /*
             uint8_t alertBuf[256];
             int alertLen = encodeAlert(alert, alertBuf);
             NetworkTask *alertTask = new PublishMqttTask(
@@ -330,8 +490,11 @@ void loop()
                 alertLen,
                 ALERT_TOPIC);
             netScheduler.enqueue(alertTask, TASK_PRIORITY_CRITICAL);
-        } */
-
+            */
+        }
+    
+    
+    /*
     digitalWrite(STRAIGHT_LEFT, LOW);
     digitalWrite(STRAIGHT_RIGHT, LOW);
     digitalWrite(BACK_LEFT, LOW);
@@ -388,11 +551,6 @@ void loop()
         Serial.println("CROSS");
     }
 
-    // Read from HM-10 → Serial Monitor
-
-    currentUnixTime = timeConfig.nowUnixMs();
-    unsigned long now = millis();
-
     if (g_activeValidationTask->isCompleted())
     {
         g_activeValidationTask = nullptr;
@@ -401,15 +559,18 @@ void loop()
     {
         g_activeTripTerminationTask = nullptr;
     }
+    */
 
     // -------------------------------------------------
     // 1) QR SCANNER – ONLY when bike is IDLE
     // -------------------------------------------------
-    qrSerial.listen();
+
+    /*
     qrScanner.step();
 
     if (qrScanner.isScanReady())
     {
+        Serial.println("QR FOUND");
         String qrCode = qrScanner.takeResult();
         Serial.print(F("[QR] JSON: "));
         Serial.println(qrCode);
@@ -421,6 +582,8 @@ void loop()
         }
         else
         {
+            currentPage = DisplayPage::PleaseWait;
+            prevPage = DisplayPage::QrScan;
             Trip trip = Trip();
             trip.current_lat = last_gps_lat;
             trip.current_lng = last_gps_long;
@@ -429,8 +592,6 @@ void loop()
             if (ok)
             {
                 Serial.println(F("[QR] Valid Trip JSON"));
-                // ƯU TIÊN Reservation validation trên HTTP
-                // Enqueue reservation validation request - task priority critical
                 const char *request = "/reservation/BIK_298A1J35/validate";
                 static char responseTopic[64];
 
@@ -458,10 +619,14 @@ void loop()
             else
             {
                 Serial.println(F("[QR] Invalid Trip JSON"));
+                currentPage = DisplayPage::IncorrectQrScan;
+                prevPage = DisplayPage::QrScan;
             }
         }
     }
+    */
 
+    /*
     bool helmetConnected = readHelmetConnectedDebounced();
 
     // detect rising edge: false -> true
@@ -530,17 +695,21 @@ void loop()
     }
 
     lastStableConnected = helmetConnected;
+    */
 
     // -------------------------------------------------
     // 2) GPS – cập nhật vị trí, không đụng LCD
     // -------------------------------------------------
+
     gpsConfiguration.update();
 
     static unsigned long lastGpsPrint = 0;
-    static float lastLat = 0, lastLng = 0;
+    static float lastLat = 10.85766, lastLng = 106.76659;
     static unsigned long last_geolocation = 0;
+    last_gps_contact_time = currentUnixTime;
 
-    /*    if (now - lastGpsPrint >= 1000)
+    
+    if (now - lastGpsPrint >= 1000)
            {
                lastGpsPrint = now;
                gpsConfiguration.printDebug();
@@ -592,6 +761,7 @@ void loop()
                // -------------------------------------------------
                // 3) Indoor logic – enqueue cell / geolocation tasks
                // -------------------------------------------------
+               /*
                if (isInside && now - last_geolocation >= 10000)
                {
 
@@ -616,43 +786,52 @@ void loop()
                        netScheduler.enqueue(geoTask, TASK_PRIORITY_LOW);
                    }
                }
-           }  */
+                   */
+                   
+
+           }
+           
+               
 
     // -------------------------------------------------
     // 6) PUBLISH TELEMETRY MỖI 5 GIÂY – via scheduler
     // -------------------------------------------------
-    /*     static unsigned long lastTelemetry = 0;
-        if (now - lastTelemetry >= 5000)
-        {
-            lastTelemetry = now;
 
-            // float vbatt = readBatteryVoltage();
-            Telemetry t;
-            t.id = generateUUID();
-            t.bikeId = bikeUserName;
-            t.longitude = lastLng;
-            t.latitude = lastLat;
-            t.battery = batteryLevel;
-            t.time = currentUnixTime;
-            t.last_gps_contact_time = last_gps_contact_time;
-            t.last_gps_lat = last_gps_lat;
-            t.last_gps_long = last_gps_long;
-            t.operationState = operationState;
-            t.usageState = usageState;
+    
+    static unsigned long lastTelemetry = 0;
+    if (now - lastTelemetry >= 5000)
+    {
+        lastTelemetry = now;
+        // float vbatt = readBatteryVoltage();
+        Telemetry t;
+        t.id = generateUUID();
+        t.bikeId = bikeUserName;
+        t.longitude = cur_lng;
+        t.latitude = cur_lat;
+        t.battery = batteryLevel;
+        t.time = currentUnixTime;
+        t.last_gps_contact_time = last_gps_contact_time;
+        t.last_gps_lat = last_gps_lat;
+        t.last_gps_long = last_gps_long;
+        t.batteryIsLow = batteryIsLow;
+        t.isCrashed = isCrashed;
+        t.isToppled = isToppled;
+        t.isOutOfBound = isOutOfBound;
+        t.usageState = usageState;
 
-            uint8_t buffer[256];
-            int payloadLen = encodeTelemetry(t, buffer);
+        uint8_t buffer[256];
+        int payloadLen = encodeTelemetry(t, buffer);
 
-            Serial.println(F("[TEL] Enqueue telemetry publish"));
+        Serial.println(F("[TEL] Enqueue telemetry publish"));
 
-            NetworkTask *teleTask = new PublishMqttTask(
-                gsm,
-                buffer,
-                payloadLen,
-                MQTT_TOPIC);
-            // Telemetry is low priority / skippable
-            netScheduler.enqueue(teleTask, TASK_PRIORITY_NORMAL);
-        } */
+        NetworkTask *teleTask = new PublishMqttTask(
+            gsm,
+            buffer,
+            payloadLen,
+            MQTT_TOPIC);
+        // Telemetry is low priority / skippable
+        netScheduler.enqueue(teleTask, TASK_PRIORITY_NORMAL);
+    }
 
     // -------------------------------------------------
     // 7) Run one network task from scheduler
@@ -663,16 +842,21 @@ void loop()
     if (millis() - lastMaint > 200) // mỗi 200ms bơm 1 lần cho nhẹ nhàng
     {
         lastMaint = millis();
-
+        Serial.println("Maintaining mqtt connection....");
         // Chỉ thêm nếu còn chỗ, và không cần eviction
         netScheduler.enqueueIfSpace(
             new MqttMaintenanceTask(gsm),
             TASK_PRIORITY_LOW);
 
-        netScheduler.enqueueIfSpace(
-            new HttpMaintenanceTask(http),
-            TASK_PRIORITY_LOW);
+        /*
+    netScheduler.enqueueIfSpace(
+        new HttpMaintenanceTask(http),
+        TASK_PRIORITY_LOW);
+        */
+        
     }
+        
+    
 
     displayTask.display();
 }
