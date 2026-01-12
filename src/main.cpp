@@ -403,7 +403,6 @@ void loop()
 {
     currentUnixTime = timeConfig.nowUnixMs();
     unsigned long now = millis();
-    /*
     static unsigned long lastToppleAlert = 0;
 
     
@@ -461,7 +460,7 @@ void loop()
             Serial.println(F("[IMU] Not initialized / update failed"));
         }
     }
-        */
+        
         
 
     
@@ -481,7 +480,7 @@ void loop()
             alert.latitude = cur_lat;
             alert.time = currentUnixTime;
 
-            /*
+            
             uint8_t alertBuf[256];
             int alertLen = encodeAlert(alert, alertBuf);
             NetworkTask *alertTask = new PublishMqttTask(
@@ -490,11 +489,11 @@ void loop()
                 alertLen,
                 ALERT_TOPIC);
             netScheduler.enqueue(alertTask, TASK_PRIORITY_CRITICAL);
-            */
+            
         }
     
     
-    /*
+    
     digitalWrite(STRAIGHT_LEFT, LOW);
     digitalWrite(STRAIGHT_RIGHT, LOW);
     digitalWrite(BACK_LEFT, LOW);
@@ -559,13 +558,13 @@ void loop()
     {
         g_activeTripTerminationTask = nullptr;
     }
-    */
+    
 
     // -------------------------------------------------
     // 1) QR SCANNER – ONLY when bike is IDLE
     // -------------------------------------------------
 
-    /*
+    
     qrScanner.step();
 
     if (qrScanner.isScanReady())
@@ -624,9 +623,9 @@ void loop()
             }
         }
     }
-    */
+    
 
-    /*
+    
     bool helmetConnected = readHelmetConnectedDebounced();
 
     // detect rising edge: false -> true
@@ -695,7 +694,7 @@ void loop()
     }
 
     lastStableConnected = helmetConnected;
-    */
+
 
     // -------------------------------------------------
     // 2) GPS – cập nhật vị trí, không đụng LCD
