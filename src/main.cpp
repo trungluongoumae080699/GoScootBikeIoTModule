@@ -72,7 +72,7 @@ const char GPRS_PASS[] = "";
 
 // ----------------- MQTT config -----------------
 const char *MQTT_HOST = "0.tcp.ap.ngrok.io";
-const uint16_t MQTT_PORT = 15311;
+const uint16_t MQTT_PORT = 10892;
 const char *MQTT_USER = "BIK_298A1J35";
 const char *MQTT_PASS = "TrungLuong080699!!!";
 const char *MQTT_TOPIC = "/telemetry/BIK_298A1J35";
